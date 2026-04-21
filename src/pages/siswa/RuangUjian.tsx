@@ -610,7 +610,7 @@ export default function RuangUjian() {
               <button
                 onClick={toggleFlag}
                 className={cn(
-                  "hidden sm:block px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest transition-all border",
+                  "flex-1 lg:flex-none px-2 lg:px-8 py-3 rounded font-black text-[10px] uppercase tracking-widest transition-all border",
                   flagged[currentSoal.id] 
                     ? "bg-exam-warning border-exam-warning text-navy shadow-lg shadow-exam-warning/20" 
                     : "bg-slate-50 border-slate-200 text-slate-400 hover:text-navy hover:border-navy"
