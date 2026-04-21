@@ -58,8 +58,19 @@ export default function App() {
   const logout = () => setUser(null);
 
   const ProtectedRoute = ({ children, allowedRoles }: { children: ReactNode; allowedRoles: Role[] }) => {
-    if (!user) return <Navigate to="/login" replace />;
-    if (!allowedRoles.includes(user.role)) return <Navigate to="/" replace />;
+    const { user } = useAuth();
+
+    // JIKA USER TIDAK ADA (BELUM LOGIN)
+    if (!user) {
+      // Otomatis redirect ke halaman login
+      return <Navigate to="/login" replace />;
+    }
+
+    // JIKA ROLE TIDAK SESUAI
+    if (!allowedRoles.includes(user.role)) {
+      return <Navigate to="/" replace />;
+    }
+
     return <SidebarLayout>{children}</SidebarLayout>;
   };
 
