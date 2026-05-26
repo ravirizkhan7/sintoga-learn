@@ -1,13 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Plus, 
   Calendar, 
-  Users, 
   BarChart3, 
-  MoreVertical, 
   Edit, 
   Trash2, 
-  Eye,
   FileSpreadsheet,
   Clock,
   RefreshCcw,
@@ -18,125 +15,195 @@ import {
   Activity,
   BookOpen
 } from 'lucide-react';
-import { mockDaftarUjian, mockJurusan } from '../../lib/mockData';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../App';
-import { DaftarUjian } from '../../types';
-
 import { useNavigate } from 'react-router-dom';
+import api from '../../lib/axios';
+
+interface Ujian {
+  id: number;
+  judul_ujian: string;
+  guru_id: number;
+  kelas: string;
+  tahun_ajar: string;
+  tipe_ujian: string;
+  semester: string;
+  kode_ujian: string | null;
+  durasi_menit: number;
+  tanggal_ujian: string;
+  waktu_mulai: string;
+  waktu_selesai: string;
+  status: 'draft' | 'published' | 'ongoing' | 'finished';
+}
+
+const generateExamCode = () => {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let result = '';
+  for (let i = 0; i < 6; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+
+const now = new Date();
+const padTwo = (n: number) => String(n).padStart(2, '0');
+const currentTime = `${padTwo(now.getHours())}:${padTwo(now.getMinutes())}`;
+const oneHourLater = `${padTwo((now.getHours() + 1) % 24)}:${padTwo(now.getMinutes())}`;
+
+const initialExamState = {
+  judul_ujian: '',
+  kode_ujian: '',
+  durasi_menit: '60',
+  kelas: '',
+  tahun_ajar: `${now.getFullYear()}/${now.getFullYear() + 1}`,
+  tipe_ujian: 'harian',      // ← lowercase, sesuai enum backend
+  semester: 'ganjil',         // ← lowercase, sesuai enum backend
+  tanggal_ujian: now.toISOString().slice(0, 10),
+  waktu_mulai: currentTime,
+  waktu_selesai: oneHourLater,
+  status: 'draft' as Ujian['status'],
+};
+
+const statusConfig: Record<string, { label: string; className: string }> = {
+  draft:     { label: 'Draft',     className: 'bg-slate-50 text-slate-500 border-slate-200' },
+  published: { label: 'Published', className: 'bg-blue-50 text-blue-600 border-blue-100' },
+  ongoing:   { label: 'Ongoing',   className: 'bg-amber-50 text-amber-600 border-amber-100' },
+  finished:  { label: 'Finished',  className: 'bg-green-50 text-green-700 border-green-100' },
+};
 
 export default function DashboardGuru() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [exams, setExams] = useState<DaftarUjian[]>(mockDaftarUjian);
+
+  const [exams, setExams] = useState<Ujian[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
-  
-  const generateExamCode = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // Exclude ambiguous chars like 0, O, 1, I
-    let result = '';
-    for (let i = 0; i < 6; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  };
-
-  const initialExamState = {
-    judul_ujian: '',
-    kode_ujian: '',
-    durasi_menit: '60',
-    kelas: '',
-    jurusan_id: '',
-    tahun_ajaran: `${new Date().getFullYear()}/${new Date().getFullYear() + 1}`,
-    tipe_ujian: 'Harian' as const,
-    semester: '1', // 1 for Ganjil, 0 for Genap
-    waktu_mulai: new Date().toISOString().slice(0, 16),
-    waktu_selesai: new Date(Date.now() + 3600000).toISOString().slice(0, 16),
-    status_aktif: true
-  };
-
+  const [originalExam, setOriginalExam] = useState<Ujian | null>(null);
   const [newExam, setNewExam] = useState(initialExamState);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Generate code when modal opens for NEW exam
-  React.useEffect(() => {
-    if (showModal && !editingId && !newExam.kode_ujian) {
+  const fetchExams = async () => {
+    try {
+      setIsLoading(true);
+      const res = await api.get('/ujian');
+      const raw = res.data?.data;
+      const data = Array.isArray(raw) ? raw : raw?.data ?? [];
+      setExams(data);
+    } catch (err) {
+      console.error('Gagal fetch ujian:', err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchExams();
+  }, []);
+
+  useEffect(() => {
+    if (showModal && !editingId) {
       setNewExam(prev => ({ ...prev, kode_ujian: generateExamCode() }));
     }
-  }, [showModal, editingId]);
+  }, [showModal]);
 
-  const handleAddExam = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    
-    if (editingId) {
-      setExams(prev => prev.map(ex => ex.id === editingId ? {
-        ...ex,
+
+    try {
+      setIsSubmitting(true);
+
+      const payload: any = {
         judul_ujian: newExam.judul_ujian,
-        kode_ujian: newExam.kode_ujian,
         durasi_menit: Number(newExam.durasi_menit),
         kelas: newExam.kelas,
-        jurusan_id: Number(newExam.jurusan_id),
-        tahun_ajaran: newExam.tahun_ajaran,
-        tipe_ujian: newExam.tipe_ujian as any,
-        semester: newExam.semester === '1',
-        status_aktif: newExam.status_aktif,
-        waktu_mulai: newExam.waktu_mulai,
-        waktu_selesai: newExam.waktu_selesai,
-      } : ex));
-    } else {
-      const id = exams.length > 0 ? Math.max(...exams.map(ex => ex.id)) + 1 : 1;
-      
-      const exam: DaftarUjian = {
-        id,
-        id_guru: user.id,
-        judul_ujian: newExam.judul_ujian,
-        kode_ujian: newExam.kode_ujian,
-        durasi_menit: Number(newExam.durasi_menit),
-        kelas: newExam.kelas,
-        jurusan_id: Number(newExam.jurusan_id),
-        tahun_ajaran: newExam.tahun_ajaran,
-        tipe_ujian: newExam.tipe_ujian as any,
-        semester: newExam.semester === '1',
-        status_aktif: newExam.status_aktif,
-        waktu_mulai: newExam.waktu_mulai,
-        waktu_selesai: newExam.waktu_selesai,
+        tahun_ajar: newExam.tahun_ajar,
+        tipe_ujian: newExam.tipe_ujian.toLowerCase(),   // pastikan lowercase
+        semester: newExam.semester.toLowerCase(),         // pastikan lowercase
+        tanggal_ujian: newExam.tanggal_ujian,
+        waktu_mulai: newExam.waktu_mulai.length === 5
+          ? newExam.waktu_mulai + ':00'
+          : newExam.waktu_mulai,
+        waktu_selesai: newExam.waktu_selesai.length === 5
+          ? newExam.waktu_selesai + ':00'
+          : newExam.waktu_selesai,
       };
-      
-      setExams([exam, ...exams]);
+
+      if (editingId) {
+        // Status dikirim as-is (sudah lowercase dari state)
+        payload.status = newExam.status;
+
+        // Kode ujian hanya dikirim kalau berubah
+        if (newExam.kode_ujian !== (originalExam?.kode_ujian ?? '')) {
+          payload.kode_ujian = newExam.kode_ujian;
+        }
+
+        await api.put(`/ujian/${editingId}`, payload);
+        alert('✅ Ujian berhasil diperbarui!');
+      } else {
+        payload.kode_ujian = newExam.kode_ujian;
+        await api.post('/ujian', payload);
+        alert('✅ Ujian berhasil dibuat!');
+      }
+
+      setShowModal(false);
+      setEditingId(null);
+      setOriginalExam(null);
+      setNewExam(initialExamState);
+      fetchExams();
+    } catch (err: any) {
+      const msg = err.response?.data?.message
+        || err.response?.data?.errors
+        || 'Gagal menyimpan ujian';
+      alert('❌ ' + (typeof msg === 'object' ? JSON.stringify(msg) : msg));
+    } finally {
+      setIsSubmitting(false);
     }
-    
-    setShowModal(false);
-    setEditingId(null);
-    setNewExam(initialExamState);
   };
 
-  const handleEdit = (ujian: DaftarUjian) => {
+  const handleEdit = (ujian: Ujian) => {
+    setOriginalExam(ujian);
     setEditingId(ujian.id);
     setNewExam({
       judul_ujian: ujian.judul_ujian,
-      kode_ujian: ujian.kode_ujian,
+      kode_ujian: ujian.kode_ujian || '',
       durasi_menit: String(ujian.durasi_menit),
       kelas: ujian.kelas,
-      jurusan_id: String(ujian.jurusan_id),
-      tahun_ajaran: ujian.tahun_ajaran,
-      tipe_ujian: ujian.tipe_ujian,
-      semester: ujian.semester ? '1' : '0',
-      waktu_mulai: new Date(ujian.waktu_mulai).toISOString().slice(0, 16),
-      waktu_selesai: new Date(ujian.waktu_selesai).toISOString().slice(0, 16),
-      status_aktif: ujian.status_aktif
+      tahun_ajar: ujian.tahun_ajar,
+      tipe_ujian: ujian.tipe_ujian.toLowerCase(),    // ← normalize pas load edit
+      semester: ujian.semester.toLowerCase(),          // ← normalize pas load edit
+      tanggal_ujian: ujian.tanggal_ujian?.slice(0, 10) || '',
+      waktu_mulai: ujian.waktu_mulai?.slice(0, 5) || '',
+      waktu_selesai: ujian.waktu_selesai?.slice(0, 5) || '',
+      status: ujian.status,                            // sudah lowercase dari enum
     });
     setShowModal(true);
   };
 
-  const handleDelete = (id: number) => {
-    if (confirm('Hapus sesi ujian ini secara permanen?')) {
-      setExams(exams.filter(e => e.id !== id));
+  const handleDelete = async (id: number) => {
+    if (!confirm('Hapus sesi ujian ini secara permanen?')) return;
+    try {
+      await api.delete(`/ujian/${id}`);
+      fetchExams();
+      alert('🗑️ Ujian berhasil dihapus!');
+    } catch (err) {
+      alert('❌ Gagal menghapus ujian');
     }
+  };
+
+  const handleCloseModal = () => {
+    setShowModal(false);
+    setEditingId(null);
+    setOriginalExam(null);
+    setNewExam(initialExamState);
   };
 
   return (
     <div className="space-y-6">
+
+      {/* Modal Tambah/Edit Ujian */}
       <AnimatePresence>
         {showModal && (
           <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -144,7 +211,7 @@ export default function DashboardGuru() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              onClick={() => setShowModal(false)}
+              onClick={handleCloseModal}
               className="absolute inset-0 bg-navy/80 backdrop-blur-sm"
             />
             <motion.div 
@@ -158,7 +225,9 @@ export default function DashboardGuru() {
                   {editingId ? 'Edit Konfigurasi Ujian' : 'Konfigurasi Ujian Baru'}
                 </h3>
               </div>
-              <form onSubmit={handleAddExam} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto custom-scrollbar">
+              <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+
+                {/* Judul Ujian */}
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                     <FileText size={12} /> Judul Ujian
@@ -172,6 +241,7 @@ export default function DashboardGuru() {
                   />
                 </div>
 
+                {/* Kode & Durasi */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -209,6 +279,7 @@ export default function DashboardGuru() {
                   </div>
                 </div>
 
+                {/* Kelas & Tahun Ajar */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
@@ -224,35 +295,20 @@ export default function DashboardGuru() {
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <BookOpen size={12} /> Jurusan
-                    </label>
-                    <select 
-                      required
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
-                      value={newExam.jurusan_id}
-                      onChange={e => setNewExam({...newExam, jurusan_id: e.target.value})}
-                    >
-                      <option value="">Pilih Jurusan</option>
-                      {mockJurusan.map(j => (
-                        <option key={j.id} value={j.id}>{j.kode_jurusan} - {j.nama_jurusan}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <CalendarDays size={12} /> Tahun Ajaran
+                      <CalendarDays size={12} /> Tahun Ajar
                     </label>
                     <input 
                       required
-                      placeholder="2023/2024"
+                      placeholder="2024/2025"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
-                      value={newExam.tahun_ajaran}
-                      onChange={e => setNewExam({...newExam, tahun_ajaran: e.target.value})}
+                      value={newExam.tahun_ajar}
+                      onChange={e => setNewExam({...newExam, tahun_ajar: e.target.value})}
                     />
                   </div>
+                </div>
+
+                {/* Tipe & Semester */}
+                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                       <Activity size={12} /> Tipe Ujian
@@ -260,17 +316,15 @@ export default function DashboardGuru() {
                     <select 
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
                       value={newExam.tipe_ujian}
-                      onChange={e => setNewExam({...newExam, tipe_ujian: e.target.value as any})}
+                      onChange={e => setNewExam({...newExam, tipe_ujian: e.target.value})}
                     >
-                      <option value="Harian">Harian</option>
-                      <option value="STS">STS</option>
-                      <option value="UTS">UTS</option>
-                      <option value="UAS">UAS</option>
+                      {/* value lowercase sesuai enum backend */}
+                      <option value="harian">Harian</option>
+                      <option value="sts">STS</option>
+                      <option value="uts">UTS</option>
+                      <option value="uas">UAS</option>
                     </select>
                   </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
                       <RefreshCcw size={12} /> Semester
@@ -280,69 +334,94 @@ export default function DashboardGuru() {
                       value={newExam.semester}
                       onChange={e => setNewExam({...newExam, semester: e.target.value})}
                     >
-                      <option value="1">Ganjil</option>
-                      <option value="0">Genap</option>
-                    </select>
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      <Calendar size={12} /> Status Aktif
-                    </label>
-                    <select 
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
-                      value={newExam.status_aktif ? '1' : '0'}
-                      onChange={e => setNewExam({...newExam, status_aktif: e.target.value === '1'})}
-                    >
-                      <option value="1">Aktif</option>
-                      <option value="0">Nonaktif</option>
+                      {/* value lowercase sesuai enum backend */}
+                      <option value="ganjil">Ganjil</option>
+                      <option value="genap">Genap</option>
                     </select>
                   </div>
                 </div>
 
+                {/* Status — hanya muncul saat EDIT */}
+                {editingId && (
+                  <motion.div
+                    initial={{ opacity: 0, y: -8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="space-y-1"
+                  >
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                      <Calendar size={12} /> Status Ujian
+                    </label>
+                    <select 
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
+                      value={newExam.status}
+                      onChange={e => setNewExam({...newExam, status: e.target.value as Ujian['status']})}
+                    >
+                      {/* value lowercase sesuai enum database */}
+                      <option value="draft">Draft</option>
+                      <option value="published">Published</option>
+                      <option value="ongoing">Ongoing</option>
+                      <option value="finished">Finished</option>
+                    </select>
+                  </motion.div>
+                )}
+
+                {/* Tanggal Ujian */}
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
+                    <CalendarDays size={12} /> Tanggal Ujian
+                  </label>
+                  <input 
+                    type="date"
+                    required
+                    className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-[10px] font-bold"
+                    value={newExam.tanggal_ujian}
+                    onChange={e => setNewExam({...newExam, tanggal_ujian: e.target.value})}
+                  />
+                </div>
+
+                {/* Waktu Mulai & Selesai */}
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      Mulai
+                      <Clock size={12} /> Waktu Mulai
                     </label>
                     <input 
-                      type="datetime-local"
+                      type="time"
                       required
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-[10px] font-bold"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
                       value={newExam.waktu_mulai}
                       onChange={e => setNewExam({...newExam, waktu_mulai: e.target.value})}
                     />
                   </div>
                   <div className="space-y-1">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                      Selesai
+                      <Clock size={12} /> Waktu Selesai
                     </label>
                     <input 
-                      type="datetime-local"
+                      type="time"
                       required
-                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-[10px] font-bold"
+                      className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-xs font-bold"
                       value={newExam.waktu_selesai}
                       onChange={e => setNewExam({...newExam, waktu_selesai: e.target.value})}
                     />
                   </div>
                 </div>
 
+                {/* Buttons */}
                 <div className="flex gap-3 pt-4">
                   <button 
                     type="button"
-                    onClick={() => {
-                      setShowModal(false);
-                      setEditingId(null);
-                      setNewExam(initialExamState);
-                    }}
+                    onClick={handleCloseModal}
                     className="flex-1 py-3 bg-slate-50 text-slate-400 font-black text-[10px] uppercase tracking-widest rounded border border-slate-200"
                   >
                     Batal
                   </button>
                   <button 
                     type="submit"
-                    className="flex-1 py-3 bg-navy text-white font-black text-[10px] uppercase tracking-widest rounded shadow-xl shadow-navy/20 active:scale-95"
+                    disabled={isSubmitting}
+                    className="flex-1 py-3 bg-navy text-white font-black text-[10px] uppercase tracking-widest rounded shadow-xl shadow-navy/20 active:scale-95 disabled:opacity-50"
                   >
-                    {editingId ? 'Simpan Perubahan' : 'Simpan Ujian'}
+                    {isSubmitting ? 'Menyimpan...' : editingId ? 'Simpan Perubahan' : 'Simpan Ujian'}
                   </button>
                 </div>
               </form>
@@ -351,13 +430,13 @@ export default function DashboardGuru() {
         )}
       </AnimatePresence>
 
-      {/* Stats Section */}
+      {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Ujian Aktif', value: exams.filter(e => e.status_aktif).length, icon: Calendar, color: 'bg-blue-600' },
-          { label: 'Total Siswa', value: '1,240', icon: Users, color: 'bg-navy' },
-          { label: 'Rata-rata Nilai', value: '84.2', icon: BarChart3, color: 'bg-exam-success' },
-          { label: 'Bank Soal', value: '450', icon: BarChart3, color: 'bg-light-blue' },
+          { label: 'Draft',     value: exams.filter(e => e.status === 'draft').length,     icon: FileText,  color: 'bg-slate-500' },
+          { label: 'Published', value: exams.filter(e => e.status === 'published').length, icon: Calendar,  color: 'bg-blue-600' },
+          { label: 'Ongoing',   value: exams.filter(e => e.status === 'ongoing').length,   icon: Activity,  color: 'bg-amber-500' },
+          { label: 'Finished',  value: exams.filter(e => e.status === 'finished').length,  icon: BarChart3, color: 'bg-exam-success' },
         ].map((stat, i) => (
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
@@ -377,7 +456,7 @@ export default function DashboardGuru() {
         ))}
       </div>
 
-      {/* Main List Column */}
+      {/* Table */}
       <div className="bg-white rounded border border-exam-border overflow-hidden shadow-sm">
         <div className="p-6 border-b border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
@@ -394,98 +473,108 @@ export default function DashboardGuru() {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[800px]">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 text-left uppercase tracking-widest">
-                <th className="px-8 py-4">Judul & Kode</th>
-                <th className="px-8 py-4">KLS & Jurusan</th>
-                <th className="px-8 py-4">Tipe & SMT</th>
-                <th className="px-8 py-4">Durasi</th>
-                <th className="px-8 py-4">Status</th>
-                <th className="px-8 py-4 text-right">Opsi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              <AnimatePresence initial={false}>
-                {exams.map((ujian) => {
-                  const jurusanData = mockJurusan.find(j => j.id === ujian.jurusan_id);
-                  return (
-                    <motion.tr 
-                      layout
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0, x: -10 }}
-                      key={ujian.id} 
-                      className="hover:bg-slate-50/50 transition-colors group"
-                    >
-                      <td className="px-8 py-5">
-                        <div>
+          {isLoading ? (
+            <div className="flex items-center justify-center h-48">
+              <p className="text-slate-400 text-xs font-black uppercase tracking-widest animate-pulse">Memuat data ujian...</p>
+            </div>
+          ) : (
+            <table className="w-full min-w-[800px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-black text-slate-400 text-left uppercase tracking-widest">
+                  <th className="px-8 py-4">Judul & Kode</th>
+                  <th className="px-8 py-4">Kelas</th>
+                  <th className="px-8 py-4">Tipe & SMT</th>
+                  <th className="px-8 py-4">Durasi</th>
+                  <th className="px-8 py-4">Status</th>
+                  <th className="px-8 py-4 text-right">Opsi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                <AnimatePresence initial={false}>
+                  {exams.length > 0 ? exams.map((ujian) => {
+                    const status = statusConfig[ujian.status] ?? { label: ujian.status, className: 'bg-slate-50 text-slate-500 border-slate-200' };
+                    return (
+                      <motion.tr 
+                        layout
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0, x: -10 }}
+                        key={ujian.id} 
+                        className="hover:bg-slate-50/50 transition-colors group"
+                      >
+                        <td className="px-8 py-5">
                           <p className="text-sm font-bold text-navy uppercase tracking-tight">{ujian.judul_ujian}</p>
-                          <p className="text-[10px] font-mono font-bold text-light-blue leading-none">{ujian.kode_ujian}</p>
-                          <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase italic">{ujian.tahun_ajaran}</p>
-                        </div>
-                      </td>
-                      <td className="px-8 py-5">
-                        <div className="space-y-1">
+                          <p className="text-[10px] font-mono font-bold text-light-blue leading-none">{ujian.kode_ujian || '-'}</p>
+                          <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase italic">{ujian.tahun_ajar}</p>
+                        </td>
+                        <td className="px-8 py-5">
                           <div className="flex items-center gap-1.5 text-navy">
                             <Layers size={12} className="text-light-blue" />
                             <span className="text-xs font-black uppercase">{ujian.kelas}</span>
                           </div>
-                          <p className="text-[10px] text-slate-400 font-medium uppercase tracking-tighter">
-                            {jurusanData?.kode_jurusan || 'N/A'}
-                          </p>
-                        </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <p className="text-xs font-black text-slate-600 uppercase tracking-tighter">{ujian.tipe_ujian}</p>
+                          <p className="text-[10px] text-slate-400 uppercase tracking-widest">{ujian.semester}</p>
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="flex items-center gap-1 text-[10px] font-black text-slate-600 uppercase">
+                            <Clock size={12} className="text-slate-400" />
+                            {ujian.durasi_menit}m
+                          </div>
+                        </td>
+                        <td className="px-8 py-5">
+                          <span className={cn(
+                            "inline-flex px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border",
+                            status.className
+                          )}>
+                            {status.label}
+                          </span>
+                        </td>
+                        <td className="px-8 py-5">
+                          <div className="flex items-center justify-end gap-1">
+                            <button 
+                              onClick={() => navigate(`/guru/bank-soal?ujianId=${ujian.id}`)}
+                              className="p-2 text-slate-400 hover:text-light-blue hover:bg-slate-100 rounded transition-colors"
+                              title="Bank Soal"
+                            >
+                              <BookOpen size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleEdit(ujian)}
+                              className="p-2 text-slate-400 hover:text-light-blue hover:bg-slate-100 rounded transition-colors"
+                              title="Edit"
+                            >
+                              <Edit size={16} />
+                            </button>
+                            <button 
+                              onClick={() => handleDelete(ujian.id)}
+                              className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          </div>
+                        </td>
+                      </motion.tr>
+                    );
+                  }) : (
+                    <tr>
+                      <td colSpan={6} className="px-8 py-20 text-center">
+                        <p className="text-sm font-black text-slate-300 uppercase tracking-widest italic">Belum ada ujian</p>
                       </td>
-                      <td className="px-8 py-5">
-                        <p className="text-xs font-black text-slate-600 uppercase tracking-tighter">{ujian.tipe_ujian}</p>
-                        <p className="text-[10px] text-slate-400 uppercase tracking-widest">{ujian.semester ? 'Ganjil' : 'Genap'}</p>
-                      </td>
-                    <td className="px-8 py-5">
-                      <div className="flex items-center gap-1 text-[10px] font-black text-slate-600 uppercase">
-                        <Clock size={12} className="text-slate-400" />
-                        {ujian.durasi_menit}m
-                      </div>
-                    </td>
-                    <td className="px-8 py-5">
-                      <span className={cn(
-                        "inline-flex px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border",
-                        ujian.status_aktif ? "bg-green-50 text-green-700 border-green-100" : "bg-red-50 text-red-700 border-red-100"
-                      )}>
-                        {ujian.status_aktif ? 'Aktif' : 'Draft'}
-                      </span>
-                    </td>
-                    <td className="px-8 py-5">
-                      <div className="flex items-center justify-end gap-1">
-                        <button 
-                          onClick={() => navigate(`/guru/bank-soal?ujianId=${ujian.id}`)}
-                          className="p-2 text-slate-400 hover:text-light-blue hover:bg-slate-100 rounded transition-colors tooltip" title="Bank Soal"
-                        >
-                          <BookOpen size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleEdit(ujian)}
-                          className="p-2 text-slate-400 hover:text-light-blue hover:bg-slate-100 rounded transition-colors tooltip" title="Edit"
-                        >
-                          <Edit size={16} />
-                        </button>
-                        <button 
-                          onClick={() => handleDelete(ujian.id)}
-                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors tooltip" title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
-                  </motion.tr>
-                );
-              })}
-            </AnimatePresence>
-          </tbody>
-          </table>
+                    </tr>
+                  )}
+                </AnimatePresence>
+              </tbody>
+            </table>
+          )}
         </div>
 
         <div className="p-4 bg-slate-50/50 border-t border-slate-100 flex items-center justify-between">
-          <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-none">Record: {exams.length} items</p>
+          <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest leading-none">
+            Record: {exams.length} items
+          </p>
           <button className="text-navy font-black text-[10px] uppercase tracking-widest flex items-center gap-1.5 hover:underline">
             <FileSpreadsheet size={14} />
             Export data

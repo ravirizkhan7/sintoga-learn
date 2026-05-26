@@ -1,4 +1,4 @@
-import React, { ReactNode, useState, useRef } from 'react';
+import React, { ReactNode, useState, useEffect } from 'react'; // ← tambah useEffect
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../App';
 import { 
@@ -17,14 +17,11 @@ import {
   ChevronDown,
   FileCheck,
   History,
-  Camera
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import Cropper, { Area, Point } from 'react-easy-crop';
 import { cn } from '../lib/utils';
-import { mockDaftarUjian, mockBankSoal } from '../lib/mockData';
 import { useGlobalState } from '../context/GlobalStateContext';
-import { getCroppedImg, compressImage } from '../lib/imageUtils';
+import api from '../lib/axios';
 
 interface SidebarLayoutProps {
   children: ReactNode;
@@ -42,60 +39,63 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
   const [isBankSoalOpen, setIsBankSoalOpen] = useState(false);
-  const [profileImage, setProfileImage] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [bankSoalSearch, setBankSoalSearch] = useState('');
+  const [teacherExams, setTeacherExams] = useState<any[]>([]);
 
-  // States for Image Cropping
-  const [tempImage, setTempImage] = useState<string | null>(null);
-  const [crop, setCrop] = useState<Point>({ x: 0, y: 0 });
-  const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState<Area | null>(null);
-  const [isCropping, setIsCropping] = useState(false);
-  const [isProcessing, setIsProcessing] = useState(false);
+  const [editProfileData, setEditProfileData] = useState({
+    nama: user?.nama || '',
+    email: user?.email || '',
+    password: '',
+    password_confirmation: '',
+  });
+  const [editProfileLoading, setEditProfileLoading] = useState(false);
+  useEffect(() => {
+    if (!isBankSoalOpen) setBankSoalSearch('');
+  }, [isBankSoalOpen]);
+  // ← Fetch ujian guru dari backend
+  useEffect(() => {
+    if (user?.role === 'guru') {
+      api.get('/ujian')
+        .then(res => {
+          const raw = res.data?.data;
+          const data = Array.isArray(raw) ? raw : raw?.data ?? [];
+          setTeacherExams(data);
+        })
+        .catch(err => console.error('Gagal fetch ujian guru:', err));
+    }
+  }, [user]);
 
   if (!user) return null;
 
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setTempImage(reader.result as string);
-        setIsCropping(true);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const onCropComplete = (_croppedArea: Area, croppedAreaPixels: Area) => {
-    setCroppedAreaPixels(croppedAreaPixels);
-  };
-
-  const handleSaveCrop = async () => {
-    if (!tempImage || !croppedAreaPixels) return;
-
+  const handleEditProfile = async () => {
     try {
-      setIsProcessing(true);
-      
-      // 1. Get Cropped Image
-      const croppedImageBlob = await getCroppedImg(tempImage, croppedAreaPixels);
-      if (!croppedImageBlob) return;
+      setEditProfileLoading(true);
 
-      // 2. Automatically Compress to <= 1MB
-      const compressedBlob = await compressImage(croppedImageBlob);
-      
-      // 3. Convert back to Data URL for preview
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setProfileImage(reader.result as string);
-        setIsCropping(false);
-        setIsProcessing(false);
-        setTempImage(null);
+      const payload: any = {
+        nama: editProfileData.nama,
       };
-      reader.readAsDataURL(compressedBlob as Blob);
-    } catch (error) {
-      console.error('Error processing image:', error);
-      setIsProcessing(false);
+
+      if (editProfileData.email !== user.email) {
+        payload.email = editProfileData.email;
+      }
+
+      if (editProfileData.password) {
+        if (editProfileData.password !== editProfileData.password_confirmation) {
+          alert('Konfirmasi password tidak cocok!');
+          return;
+        }
+        payload.password = editProfileData.password;
+        payload.password_confirmation = editProfileData.password_confirmation;
+      }
+
+      await api.put('/auth/me/edit', payload);
+      alert('Profil berhasil diperbarui.');
+      setShowEditProfileModal(false);
+      setEditProfileData(prev => ({ ...prev, password: '', password_confirmation: '' }));
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Gagal update profil');
+    } finally {
+      setEditProfileLoading(false);
     }
   };
 
@@ -105,19 +105,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
     navigate('/login', { replace: true });
   };
 
-  const teacherExams = mockDaftarUjian.filter(e => e.id_guru === user.id);
-
-  // Count pending assessments (isian/essay without skor) for active teacher/admin
-  const pendingGradesCount = studentAnswers.filter(ans => {
-    const soal = mockBankSoal.find(s => s.id === ans.id_soal);
-    if (!soal) return false;
-    const ujian = mockDaftarUjian.find(u => u.id === soal.id_ujian);
-    
-    // Check if exam belongs to current teacher OR if user is admin
-    const isAuthorized = user.role === 'admin' || ujian?.id_guru === user.id;
-    
-    return isAuthorized && (soal?.tipe_soal === 'isian' || soal?.tipe_soal === 'essay') && ans.skor === undefined;
-  }).length;
+  const pendingGradesCount = 0;
 
   const menuItems = {
     siswa: [
@@ -143,14 +131,16 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
     admin: [
       { path: '/admin', icon: LayoutDashboard, label: 'Sistem' },
       { path: '/admin/users', icon: Users, label: 'Kelola User' },
-      { path: '/admin/siswa', icon: GraduationCap, label: 'Manajemen Siswa' },
       { path: '/admin/jurusan', icon: Layers, label: 'Manajemen Jurusan' },
       { path: '/admin/rekap', icon: History, label: 'Rekap Histori' },
       { path: '/admin/konfigurasi', icon: Settings, label: 'Konfigurasi' },
     ],
   };
 
-  const currentMenu = menuItems[user.role];
+  const currentMenu = (user.role === 'superadmin')
+    ? menuItems.admin
+    : (menuItems[user.role as keyof typeof menuItems] ?? []);
+
   const isExamPage = location.pathname.startsWith('/siswa/ujian/');
 
   if (isExamPage) {
@@ -255,22 +245,61 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
                         exit={{ height: 0, opacity: 0 }}
                         className="overflow-hidden bg-black/10 rounded-lg mx-2"
                       >
-                        {item.children.map((child: any) => (
-                          <Link
-                            key={child.path}
-                            to={child.path}
-                            onClick={() => setIsMobileMenuOpen(false)}
-                            className={cn(
-                              "flex items-center gap-4 px-8 py-2 text-[10px] font-bold uppercase tracking-widest transition-all",
-                              location.search === child.path.split('?')[1] || (location.pathname + location.search) === child.path
-                                ? "text-light-blue" 
-                                : "text-slate-400 hover:text-white"
-                            )}
-                          >
-                            <div className="w-1.5 h-1.5 rounded-full bg-current" />
-                            {child.label}
-                          </Link>
-                        ))}
+                        {teacherExams.length === 0 ? (
+                          <p className="px-8 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                            Belum ada judul soal
+                          </p>
+                        ) : (
+                          <>
+                            {/* Search box */}
+                            <div className="px-3 pt-2 pb-1">
+                              <input
+                                type="text"
+                                value={bankSoalSearch}
+                                onChange={e => setBankSoalSearch(e.target.value)}
+                                placeholder="Cari ujian..."
+                                className="w-full px-3 py-1.5 bg-white/10 border border-white/10 rounded text-[10px] font-bold text-white placeholder-slate-500 outline-none focus:border-light-blue/50 transition-all"
+                              />
+                            </div>
+
+                            {/* List dengan max-height + scroll tanpa scrollbar */}
+                            <div className="overflow-y-auto max-h-[160px] pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                              {(() => {
+                                const filtered = teacherExams.filter(exam =>
+                                  exam.judul_ujian.toLowerCase().includes(bankSoalSearch.toLowerCase())
+                                );
+
+                                if (filtered.length === 0) {
+                                  return (
+                                    <p className="px-8 py-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                                      Judul tidak ada
+                                    </p>
+                                  );
+                                }
+
+                                return filtered.map((exam: any) => {
+                                  const childPath = `/guru/bank-soal?ujianId=${exam.id}`;
+                                  return (
+                                    <Link
+                                      key={exam.id}
+                                      to={childPath}
+                                      onClick={() => setIsMobileMenuOpen(false)}
+                                      className={cn(
+                                        "flex items-center gap-3 px-8 py-2 text-[10px] font-bold uppercase tracking-widest transition-all",
+                                        (location.pathname + location.search) === childPath
+                                          ? "text-light-blue"
+                                          : "text-slate-400 hover:text-white"
+                                      )}
+                                    >
+                                      <div className="w-1.5 h-1.5 rounded-full bg-current shrink-0" />
+                                      <span className="truncate">{exam.judul_ujian}</span>
+                                    </Link>
+                                  );
+                                });
+                              })()}
+                            </div>
+                          </>
+                        )}
                       </motion.div>
                     )}
                   </AnimatePresence>
@@ -307,10 +336,10 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
         <div className="p-4 border-t border-white/10">
           <div className={cn("px-4 py-2", !isSidebarOpen && "lg:hidden")}>
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Auth Terminal</p>
-            <p className="text-xs font-black truncate uppercase italic tracking-tighter text-white">{user.nama_lengkap}</p>
+            <p className="text-xs font-black truncate uppercase italic tracking-tighter text-white">{user.nama}</p>
             <div className="flex items-center gap-2 mt-1">
-               <div className="w-1.5 h-1.5 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
-               <p className="text-[10px] uppercase text-slate-400 font-black tracking-widest leading-none">Status: Encrypted</p>
+              <div className="w-1.5 h-1.5 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
+              <p className="text-[10px] uppercase text-slate-400 font-black tracking-widest leading-none">Status: Encrypted</p>
             </div>
           </div>
         </div>
@@ -336,7 +365,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
           </div>
           <div className="flex items-center gap-3 lg:gap-4 relative">
             <div className="text-right border-r pr-3 lg:pr-4 border-exam-border hidden sm:block">
-              <p className="text-xs lg:text-sm font-bold text-exam-text leading-tight">{user.nama_lengkap}</p>
+              <p className="text-xs lg:text-sm font-bold text-exam-text leading-tight">{user.nama}</p>
               <p className="text-[9px] lg:text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-none">{user.role}</p>
             </div>
             <motion.button 
@@ -351,14 +380,10 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
               <UserIcon size={18} />
             </motion.button>
 
-            {/* Profile Dropdown */}
             <AnimatePresence>
               {isProfileOpen && (
                 <>
-                  <div 
-                    className="fixed inset-0 z-10" 
-                    onClick={() => setIsProfileOpen(false)}
-                  />
+                  <div className="fixed inset-0 z-10" onClick={() => setIsProfileOpen(false)} />
                   <motion.div
                     initial={{ opacity: 0, y: 10, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -371,10 +396,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
                     </div>
                     <div className="p-2">
                       <button 
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          setShowProfileModal(true);
-                        }}
+                        onClick={() => { setIsProfileOpen(false); setShowProfileModal(true); }}
                         className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] font-black uppercase tracking-tight text-slate-600 hover:bg-slate-50 hover:text-navy rounded transition-all active:scale-95"
                       >
                         <UserIcon size={14} className="text-light-blue" /> Profil Saya
@@ -382,6 +404,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
                       <button 
                         onClick={() => {
                           setIsProfileOpen(false);
+                          setEditProfileData({ nama: user.nama, email: user.email, password: '', password_confirmation: '' });
                           setShowEditProfileModal(true);
                         }}
                         className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] font-black uppercase tracking-tight text-slate-600 hover:bg-slate-50 hover:text-navy rounded transition-all active:scale-95"
@@ -391,10 +414,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
                     </div>
                     <div className="p-2 border-t border-slate-100 bg-slate-50/20">
                       <button 
-                        onClick={() => {
-                          setIsProfileOpen(false);
-                          setShowLogoutModal(true);
-                        }}
+                        onClick={() => { setIsProfileOpen(false); setShowLogoutModal(true); }}
                         className="w-full flex items-center gap-3 px-3 py-2.5 text-[10px] font-black uppercase tracking-tight text-red-500 hover:bg-red-50 rounded transition-all active:scale-95"
                       >
                         <LogOut size={14} /> Keluar Sistem
@@ -407,19 +427,6 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
           </div>
         </header>
 
-        {/* Modal Overlay Base */}
-        <AnimatePresence>
-          {(showLogoutModal || showProfileModal || showEditProfileModal) && (
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
-              exit={{ opacity: 0 }} 
-              className="fixed inset-0 bg-navy/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4 lg:p-8"
-            />
-          )}
-        </AnimatePresence>
-
-        
         <div className="flex-1 p-6 overflow-y-auto">
           <AnimatePresence mode="wait">
             <motion.div
@@ -434,16 +441,12 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
           </AnimatePresence>
         </div>
 
-        {/* Improved Logout Modal */}
+        {/* Logout Modal */}
         <AnimatePresence>
           {showLogoutModal && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9, y: 20 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.9, y: 20 }}
-                className="bg-white rounded border border-exam-border w-full max-w-sm shadow-2xl relative overflow-hidden flex flex-col"
-              >
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowLogoutModal(false)} className="absolute inset-0 bg-navy/60 backdrop-blur-sm" />
+              <motion.div initial={{ opacity: 0, scale: 0.9, y: 20 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.9, y: 20 }} className="bg-white rounded border border-exam-border w-full max-w-sm shadow-2xl relative overflow-hidden flex flex-col">
                 <div className="bg-navy p-6 flex items-center justify-center text-red-400 border-b-4 border-red-500">
                   <motion.div animate={{ rotate: [0, 10, -10, 0] }} transition={{ repeat: Infinity, duration: 2 }}>
                     <ShieldAlert size={48} />
@@ -455,65 +458,43 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
                     <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Security Protocol Required</p>
                   </div>
                   <p className="text-xs font-bold text-slate-500 leading-relaxed uppercase tracking-tight">
-                    Anda sedang mencoba keluar dari enkripsi sistem <span className="text-navy">Sintoga Learn</span>. 
-                    Semua sesi aktif akan ditutup secara permanen. Lanjutkan?
+                    Anda sedang mencoba keluar dari enkripsi sistem <span className="text-navy">Sintoga Learn</span>. Semua sesi aktif akan ditutup secara permanen. Lanjutkan?
                   </p>
                 </div>
                 <div className="flex border-t border-slate-100 bg-slate-50/50">
-                  <button 
-                    onClick={() => setShowLogoutModal(false)}
-                    className="flex-1 px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:bg-white transition-colors border-r border-slate-100 active:bg-slate-100"
-                  >
-                    Batal Eksekusi
-                  </button>
-                  <button 
-                    onClick={handleLogout}
-                    className="flex-1 px-6 py-4 text-[10px] font-black uppercase tracking-widest bg-red-500 text-white hover:bg-red-600 transition-all shadow-inner active:scale-95"
-                  >
-                    Ya, Logout
-                  </button>
+                  <button onClick={() => setShowLogoutModal(false)} className="flex-1 px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:bg-white transition-colors border-r border-slate-100 active:bg-slate-100">Batal Eksekusi</button>
+                  <button onClick={handleLogout} className="flex-1 px-6 py-4 text-[10px] font-black uppercase tracking-widest bg-red-500 text-white hover:bg-red-600 transition-all shadow-inner active:scale-95">Ya, Logout</button>
                 </div>
               </motion.div>
             </div>
           )}
         </AnimatePresence>
 
-        {/* Profile Details Modal */}
+        {/* Profile Modal */}
         <AnimatePresence>
           {showProfileModal && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.95 }}
-                className="bg-white rounded border border-exam-border w-full max-w-md shadow-2xl relative overflow-hidden"
-              >
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setShowProfileModal(false)} className="absolute inset-0 bg-navy/60 backdrop-blur-sm" />
+              <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.95 }} className="bg-white rounded border border-exam-border w-full max-w-md shadow-2xl relative overflow-hidden">
                 <div className="bg-navy p-6 flex flex-col items-center border-b-4 border-light-blue text-white">
                   <div className="w-20 h-20 bg-white/10 rounded-full flex items-center justify-center border-4 border-white/20 mb-4">
                     <UserIcon size={40} className="text-light-blue" />
                   </div>
-                  <h3 className="text-lg font-black uppercase italic tracking-tighter">{user.nama_lengkap}</h3>
-                  <div className="px-3 py-1 bg-light-blue/20 rounded text-[9px] font-black tracking-widest uppercase mt-2">
-                    IDENTITAS: {user.role}
-                  </div>
+                  <h3 className="text-lg font-black uppercase italic tracking-tighter">{user.nama}</h3>
+                  <div className="px-3 py-1 bg-light-blue/20 rounded text-[9px] font-black tracking-widest uppercase mt-2">IDENTITAS: {user.role}</div>
                 </div>
                 <div className="p-8 space-y-6">
                   {[
                     { label: 'EMAIL ADDRESS', value: user.email },
                     { label: 'SYSTEM UID', value: `STG-USR-${user.id.toString().padStart(4, '0')}` },
-                    { label: 'ACCESS PERMISSION', value: user.role === 'admin' ? 'MASTER_ACCESS' : 'STANDARD_ACCESS' }
+                    { label: 'ACCESS PERMISSION', value: (user.role === 'admin' || user.role === 'superadmin') ? 'MASTER_ACCESS' : 'STANDARD_ACCESS' }
                   ].map((field, i) => (
                     <div key={i} className="flex justify-between items-center border-b border-slate-100 pb-2">
                       <span className="text-[9px] font-black text-slate-400 tracking-widest">{field.label}</span>
                       <span className="text-[11px] font-bold text-navy truncate ml-4 italic">{field.value}</span>
                     </div>
                   ))}
-                  <button 
-                    onClick={() => setShowProfileModal(false)}
-                    className="w-full py-4 bg-navy text-white text-[10px] font-black uppercase tracking-widest rounded shadow-xl shadow-navy/20 active:scale-95 transition-all"
-                  >
-                    TUTUP PROTOKOL
-                  </button>
+                  <button onClick={() => setShowProfileModal(false)} className="w-full py-4 bg-navy text-white text-[10px] font-black uppercase tracking-widest rounded shadow-xl shadow-navy/20 active:scale-95 transition-all">TUTUP PROTOKOL</button>
                 </div>
               </motion.div>
             </div>
@@ -524,62 +505,56 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
         <AnimatePresence>
           {showEditProfileModal && (
             <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: 20 }}
-                className="bg-white rounded border border-exam-border w-full max-w-md shadow-2xl relative overflow-hidden"
-              >
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => !editProfileLoading && setShowEditProfileModal(false)} className="absolute inset-0 bg-navy/60 backdrop-blur-sm" />
+              <motion.div initial={{ opacity: 0, y: 20, scale: 0.95 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 20, scale: 0.95 }} className="bg-white rounded-xl border border-exam-border w-full max-w-md shadow-2xl relative overflow-hidden">
                 <div className="p-6 border-b border-slate-100 bg-slate-50/50 italic">
                   <h3 className="text-sm font-black text-navy uppercase tracking-widest">Update Enkripsi Profil</h3>
                   <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Security ID Manager</p>
                 </div>
                 <div className="p-8 space-y-5">
-                  {/* Photo Profile Section */}
-                  <div className="flex flex-col items-center justify-center space-y-3 mb-6">
-                    <div className="relative group cursor-pointer" onClick={() => fileInputRef.current?.click()}>
-                      <div className="w-24 h-24 rounded-lg border-2 border-dashed border-slate-200 bg-slate-50 flex items-center justify-center overflow-hidden transition-all group-hover:border-light-blue group-hover:bg-light-blue/5">
-                        {profileImage ? (
-                          <img src={profileImage} alt="Preview" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                        ) : (
-                          <div className="flex flex-col items-center text-slate-400 group-hover:text-light-blue">
-                             <Camera size={24} />
-                             <span className="text-[8px] font-black uppercase mt-1">GANTI FOTO</span>
-                          </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Display Name</label>
+                    <input type="text" value={editProfileData.nama} onChange={e => setEditProfileData({...editProfileData, nama: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs text-navy outline-none focus:border-light-blue shadow-inner transition-all focus:ring-4 focus:ring-light-blue/10" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                    <input type="email" value={editProfileData.email} onChange={e => setEditProfileData({...editProfileData, email: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs text-navy outline-none focus:border-light-blue shadow-inner transition-all focus:ring-4 focus:ring-light-blue/10" />
+                  </div>
+                  <div className="space-y-1.5">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Password Baru <span className="normal-case text-slate-300 font-bold">(opsional)</span></label>
+                    <input type="password" placeholder="Kosongkan jika tidak ingin ganti" value={editProfileData.password} onChange={e => setEditProfileData({...editProfileData, password: e.target.value})} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-lg font-bold text-xs text-navy outline-none focus:border-light-blue shadow-inner transition-all focus:ring-4 focus:ring-light-blue/10" />
+                  </div>
+                  <AnimatePresence>
+                    {editProfileData.password && (
+                      <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="space-y-1.5">
+                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Konfirmasi Password</label>
+                        <input 
+                          type="password" 
+                          placeholder="Ulangi password baru" 
+                          value={editProfileData.password_confirmation} 
+                          onChange={e => setEditProfileData({...editProfileData, password_confirmation: e.target.value})} 
+                          className={cn(
+                            "w-full px-4 py-3 bg-slate-50 border rounded-lg font-bold text-xs text-navy outline-none shadow-inner transition-all focus:ring-4",
+                            editProfileData.password_confirmation && editProfileData.password !== editProfileData.password_confirmation
+                              ? "border-red-300 focus:border-red-400 focus:ring-red-100"
+                              : "border-slate-200 focus:border-light-blue focus:ring-light-blue/10"
+                          )} 
+                        />
+                        {editProfileData.password_confirmation && editProfileData.password !== editProfileData.password_confirmation && (
+                          <p className="text-[9px] font-black text-red-500 uppercase tracking-widest ml-1">Password tidak cocok</p>
                         )}
-                      </div>
-                      <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-light-blue text-white rounded-full flex items-center justify-center border-4 border-white shadow-lg group-hover:scale-110 transition-transform">
-                        <Camera size={14} />
-                      </div>
-                      <input 
-                        ref={fileInputRef}
-                        type="file" 
-                        accept="image/png, image/jpeg, image/jpg"
-                        className="hidden" 
-                        onChange={handleImageChange}
-                      />
-                    </div>
-                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest italic">Klik kotak untuk upload foto (PNG/JPG)</p>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Display Name Access</label>
-                    <input type="text" defaultValue={user.nama_lengkap} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue shadow-inner" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Contact Email Entry</label>
-                    <input type="email" defaultValue={user.email} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue shadow-inner" />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">System Override Password</label>
-                    <input type="password" placeholder="••••••••••••" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue shadow-inner" />
-                  </div>
-                  <div className="pt-4 flex gap-3">
-                    <button onClick={() => setShowEditProfileModal(false)} className="flex-1 py-4 text-[10px] font-black uppercase text-slate-400 hover:bg-slate-50 transition rounded border border-slate-100">Batalkan</button>
-                    <button onClick={() => {
-                       alert('Otoritas Profil Berhasil Diperbarui.');
-                       setShowEditProfileModal(false);
-                    }} className="flex-2 py-4 bg-light-blue text-white text-[10px] font-black uppercase tracking-widest rounded shadow-xl shadow-light-blue/20 active:scale-95 transition-all">Submit Update</button>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                  <div className="pt-6 flex gap-3">
+                    <button onClick={() => setShowEditProfileModal(false)} disabled={editProfileLoading} className="flex-1 py-4 text-[10px] font-black uppercase text-slate-400 hover:bg-slate-50 transition-colors rounded-lg border border-slate-100 disabled:opacity-50">Batalkan</button>
+                    <button 
+                      onClick={handleEditProfile} 
+                      disabled={editProfileLoading || (!!editProfileData.password && editProfileData.password !== editProfileData.password_confirmation)} 
+                      className="flex-[2] py-4 bg-light-blue text-white text-[10px] font-black uppercase tracking-widest rounded-lg shadow-xl shadow-light-blue/20 active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                    >
+                      {editProfileLoading ? 'Menyimpan...' : 'Submit Update'}
+                    </button>
                   </div>
                 </div>
               </motion.div>
@@ -587,101 +562,10 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
           )}
         </AnimatePresence>
 
-        {/* Image Cropper Modal - Higher Z-index to be on TOP of Edit Profile */}
-        <AnimatePresence>
-          {isCropping && (
-            <>
-              {/* Higher Z-index backdrop for cropper */}
-              <motion.div 
-                initial={{ opacity: 0 }} 
-                animate={{ opacity: 1 }} 
-                exit={{ opacity: 0 }} 
-                className="fixed inset-0 bg-navy/60 backdrop-blur-sm z-[120] flex items-center justify-center p-4 lg:p-8"
-              />
-              <div className="fixed inset-0 z-[130] flex items-center justify-center p-4">
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  exit={{ opacity: 0, scale: 0.9 }}
-                  className="bg-white rounded border border-exam-border w-full max-w-lg shadow-2xl relative overflow-hidden"
-                >
-                  <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-black text-navy uppercase tracking-widest italic">Sesuaikan Foto</h3>
-                      <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tight">Atur posisi dan zoom foto profil anda</p>
-                    </div>
-                    <button onClick={() => setIsCropping(false)} className="p-2 text-slate-400 hover:text-navy transition">
-                      <X size={20} />
-                    </button>
-                  </div>
-                  
-                  <div className="relative w-full h-[350px] bg-slate-900 border-y border-slate-200">
-                    {tempImage && (
-                      <Cropper
-                        image={tempImage}
-                        crop={crop}
-                        zoom={zoom}
-                        aspect={1}
-                        onCropChange={setCrop}
-                        onCropComplete={onCropComplete}
-                        onZoomChange={setZoom}
-                        cropShape="rect"
-                        showGrid={true}
-                      />
-                    )}
-                  </div>
-
-                  <div className="p-6 bg-white space-y-6">
-                    <div className="space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Zoom Level</span>
-                        <span className="text-[10px] font-black text-navy uppercase tracking-widest">{Math.round(zoom * 100)}%</span>
-                      </div>
-                      <input
-                        type="range"
-                        value={zoom}
-                        min={1}
-                        max={3}
-                        step={0.1}
-                        aria-labelledby="Zoom"
-                        onChange={(e) => setZoom(Number(e.target.value))}
-                        className="w-full h-1 bg-slate-100 rounded-lg appearance-none cursor-pointer accent-light-blue"
-                      />
-                    </div>
-                    
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={() => setIsCropping(false)}
-                        className="flex-1 py-3 text-[10px] font-black uppercase text-slate-400 hover:bg-slate-50 transition rounded border border-slate-100"
-                      >
-                        Batalkan
-                      </button>
-                      <button 
-                        disabled={isProcessing}
-                        onClick={handleSaveCrop}
-                        className="flex-2 py-3 bg-light-blue text-white text-[10px] font-black uppercase tracking-widest rounded shadow-xl shadow-light-blue/20 active:scale-95 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
-                      >
-                        {isProcessing ? (
-                          <>
-                            <div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            MEMPROSES...
-                          </>
-                        ) : (
-                          'TERAPKAN & SIMPAN'
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              </div>
-            </>
-          )}
-        </AnimatePresence>
-
         <div className="p-4 lg:p-6 bg-white border-t border-exam-border flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-slate-500 uppercase font-black tracking-tight shrink-0">
           <div className="flex items-center gap-3">
-             <div className="w-2 h-2 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
-             <span>System Status: Online / 192.168.1.1</span>
+            <div className="w-2 h-2 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
+            <span>System Status: Online / 192.168.1.1</span>
           </div>
           <div className="italic text-navy/40">Sintoga Learn v1.2.5-stable • SMK SINTOGA DIGITAL</div>
         </div>

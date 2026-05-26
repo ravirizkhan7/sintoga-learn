@@ -11,12 +11,27 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (login(email, password)) {
-      navigate('/');
-    } else {
-      setError('Email atau password salah');
+    setError('');
+
+    try {
+      const success = await login(email, password); 
+      
+      if (success) {
+        setError('Login berhasil! Mengarahkan...'); 
+        navigate('/', { replace: true });
+      }
+    } catch (err: any) {
+      if (err.response) {
+        const message = err.response.data.message || 'Email atau password salah';
+        setError(message);
+      } else if (err.request) {
+        setError('Gagal terhubung ke server. Cek koneksi lu, Bro!');
+      } else {
+        setError('Terjadi kesalahan sistem');
+      }
+      console.error('Login Error:', err);
     }
   };
 
@@ -73,7 +88,7 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-12 pt-8 border-t border-slate-100">
+          {/* <div className="mt-12 pt-8 border-t border-slate-100">
              <div className="bg-slate-50 p-4 rounded border border-slate-100">
                <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-wider leading-relaxed">
                  Admin: admin@gmail.com / admin1234<br/>
@@ -81,7 +96,7 @@ export default function Login() {
                  Siswa: siswa@gmail.com / siswa1234
                </p>
              </div>
-          </div>
+          </div> */}
         </div>
       </motion.div>
     </div>

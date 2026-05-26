@@ -1,132 +1,337 @@
-import { useState } from 'react';
-import { 
-  Users, 
-  Search, 
-  Download, 
-  RefreshCcw, 
-  CheckCircle2, 
-  Clock, 
+import React, { useState, useEffect } from 'react';
+import {
+  Monitor,
+  Search,
+  RefreshCcw,
+  AlertCircle,
+  X,
+  User,
+  CheckCircle2,
+  Clock,
   Award,
-  Filter
+  Trash2,
 } from 'lucide-react';
-import { mockUjianSiswa, mockUsers } from '../../lib/mockData';
+import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
+import api from '../../lib/axios';
+
+// ─── Types ────────────────────────────────────────────────────
+
+interface UjianOption {
+  id: number;
+  judul_ujian: string;
+  kode_ujian: string | null;
+  kelas: string;
+  tipe_ujian: string;
+  pending_count?: number;
+}
+
+interface SiswaUjian {
+  id: number;
+  id_ujian: number;
+  id_siswa: number;
+  status: 'pengerjaan' | 'dikirim' | 'dinilai' | string;
+  waktu_mulai: string;
+  waktu_selesai?: string | null;
+  nilai_akhir?: number | null;
+  siswa?: { id: number; nama: string };
+}
+
+// ─── Helpers ──────────────────────────────────────────────────
+
+const getStatusStyle = (status: string) => {
+  switch (status) {
+    case 'pengerjaan': return 'text-amber-600 bg-amber-50 border-amber-100';
+    case 'dikirim':    return 'text-blue-600 bg-blue-50 border-blue-100';
+    case 'dinilai':    return 'text-green-600 bg-green-50 border-green-100';
+    default:           return 'text-slate-600 bg-slate-50 border-slate-100';
+  }
+};
+
+const getStatusIcon = (status: string) => {
+  switch (status) {
+    case 'pengerjaan': return <Clock size={10} />;
+    case 'dikirim':    return <CheckCircle2 size={10} />;
+    case 'dinilai':    return <Award size={10} />;
+    default:           return null;
+  }
+};
+
+const fmtTime = (ts?: string | null) =>
+  ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-';
+
+const fmtDate = (ts?: string | null) =>
+  ts ? new Date(ts).toLocaleDateString() : '-';
+
+// ─── Component ────────────────────────────────────────────────
 
 export default function MonitorGuru() {
-  const [searchTerm, setSearchTerm] = useState('');
+  const [ujians, setUjians] = useState<UjianOption[]>([]);
+  const [selectedUjianId, setSelectedUjianId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [siswaList, setSiswaList] = useState<SiswaUjian[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isResetting, setIsResetting] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const monitorData = mockUjianSiswa.map(us => {
-    const student = mockUsers.find(u => u.id === us.id_siswa);
-    return {
-      ...us,
-      nama_siswa: student?.nama_lengkap || 'Unknown',
-      nisn: student?.nisn || '-'
-    };
+  // ─── Fetch daftar ujian ────────────────────────────────────
+  const fetchUjians = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const res = await api.get('/ujian');
+      const raw = res.data?.data;
+      const all: UjianOption[] = Array.isArray(raw) ? raw : raw?.data ?? [];
+      setUjians(all);
+      if (all.length > 0 && !selectedUjianId) {
+        setSelectedUjianId(all[0].id);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Gagal mengambil data ujian');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // ─── Fetch peserta ujian (pakai endpoint /manual) ──────────
+  const fetchSiswaUjian = async (ujian: number) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const res = await api.get(`/ujian/${ujian}/hasil`);
+      const raw = res.data?.data;
+      const data: SiswaUjian[] = Array.isArray(raw) ? raw : raw?.data ?? [];
+      setSiswaList(data);
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Gagal mengambil data peserta');
+      setSiswaList([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => { fetchUjians(); }, []);
+  useEffect(() => { if (selectedUjianId) fetchSiswaUjian(selectedUjianId); }, [selectedUjianId]);
+
+  // ─── Reset sesi siswa ──────────────────────────────────────
+  const handleReset = async (siswaUjianId: number) => {
+    if (!confirm('Reset sesi ujian siswa ini?')) return;
+    try {
+      setIsResetting(siswaUjianId);
+      await api.delete(`/ujian/${siswaUjianId}/reset`);
+      if (selectedUjianId) await fetchSiswaUjian(selectedUjianId);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Gagal mereset sesi siswa');
+    } finally {
+      setIsResetting(null);
+    }
+  };
+
+  // ─── Filter ────────────────────────────────────────────────
+  const filtered = siswaList.filter(s => {
+    if (!searchQuery) return true;
+    const nama = s.siswa?.nama || '';
+    return nama.toLowerCase().includes(searchQuery.toLowerCase());
   });
 
-  const getStatusColor = (status: string) => {
-    switch(status) {
-      case 'pengerjaan': return 'text-amber-600 bg-amber-50 border-amber-100';
-      case 'dikirim': return 'text-blue-600 bg-blue-50 border-blue-100';
-      case 'dinilai': return 'text-green-600 bg-green-50 border-green-100';
-      default: return 'text-slate-600 bg-slate-50 border-slate-100';
-    }
-  };
+  // ─── Group by status ───────────────────────────────────────
+  const grouped = filtered.reduce((acc, s) => {
+    const key = s.status;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(s);
+    return acc;
+  }, {} as Record<string, SiswaUjian[]>);
 
-  const getStatusIcon = (status: string) => {
-    switch(status) {
-      case 'pengerjaan': return <Clock size={10} />;
-      case 'dikirim': return <CheckCircle2 size={10} />;
-      case 'dinilai': return <Award size={10} />;
-      default: return null;
-    }
-  };
+  const statusOrder = ['pengerjaan', 'dikirim', 'dinilai'];
+  const sortedGroups = Object.entries(grouped).sort(
+    ([a], [b]) => statusOrder.indexOf(a) - statusOrder.indexOf(b)
+  );
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-navy uppercase italic tracking-tighter">Monitoring Real-Time</h1>
-          <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Pengawasan aktivitas ujian digital</p>
-        </div>
-        <div className="flex gap-2 w-full md:w-auto">
-          <button className="flex-1 md:flex-none border border-exam-border bg-white p-2.5 rounded hover:bg-slate-50 transition shadow-sm">
-            <RefreshCcw size={16} className="text-navy" />
-          </button>
-          <button className="flex-1 md:flex-none bg-exam-success text-white px-6 py-2.5 rounded font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-exam-success/90 transition shadow-lg shadow-exam-success/20">
-            <Download size={16} />
-            Export data
-          </button>
+      {/* ── Header & Filter ── */}
+      <div className="bg-white p-6 rounded border border-exam-border shadow-sm">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-black text-navy uppercase italic tracking-tighter flex items-center gap-2">
+              <Monitor className="text-light-blue" /> Monitoring Real-Time
+            </h2>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+              Pengawasan aktivitas ujian digital
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2 w-full sm:w-auto">
+            <select
+              className="px-4 py-2 bg-slate-50 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest outline-none focus:border-light-blue transition"
+              value={selectedUjianId || ''}
+              onChange={e => setSelectedUjianId(e.target.value ? Number(e.target.value) : null)}
+              disabled={isLoading}
+            >
+              <option value="">Pilih Ujian...</option>
+              {ujians.map(u => (
+                <option key={u.id} value={u.id}>{u.judul_ujian}</option>
+              ))}
+            </select>
+
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                placeholder="CARI SISWA..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest outline-none focus:border-light-blue transition w-full"
+              />
+            </div>
+
+            <button
+              onClick={() => selectedUjianId && fetchSiswaUjian(selectedUjianId)}
+              disabled={isLoading || !selectedUjianId}
+              className="p-2 bg-navy text-white rounded hover:bg-light-blue transition disabled:opacity-50"
+            >
+              <RefreshCcw size={14} className={isLoading ? 'animate-spin' : ''} />
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="bg-white rounded border border-exam-border shadow-sm overflow-hidden">
-        <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row gap-4 bg-slate-50/30">
-          <div className="relative flex-1">
-            <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={14} />
-            <input
-              type="text"
-              placeholder="CARI NAMA / NISN..."
-              className="w-full pl-10 pr-4 py-2.5 bg-white rounded border border-exam-border outline-none focus:border-light-blue transition text-xs font-bold uppercase tracking-widest"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-          <button className="px-4 py-2.5 bg-white border border-exam-border rounded text-[10px] font-black uppercase text-slate-600 flex items-center gap-2 hover:bg-slate-50 transition">
-            <Filter size={14} />
-            Status: ALL
+      {/* ── Error Alert ── */}
+      {error && (
+        <div className="bg-red-50 border border-red-100 p-4 rounded flex items-center gap-3">
+          <AlertCircle size={16} className="text-red-500 shrink-0" />
+          <p className="text-sm font-bold text-red-600">{error}</p>
+          <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-600">
+            <X size={16} />
           </button>
         </div>
+      )}
 
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="bg-slate-50/50 text-left border-b border-slate-100">
-                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Entitas Siswa</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Status Sesi</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Timestamp</th>
-                <th className="px-8 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Skoring</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {monitorData.map((data) => (
-                <tr key={data.id} className="hover:bg-slate-50/50 transition-colors">
-                  <td className="px-8 py-5">
-                    <div className="flex items-center gap-4">
-                      <div className="w-9 h-9 bg-navy text-white rounded flex items-center justify-center font-black text-xs">
-                        {data.nama_siswa[0]}
+      {/* ── Content ── */}
+      <div className="space-y-4">
+        <AnimatePresence mode="popLayout">
+          {isLoading ? (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="bg-white p-12 rounded border border-exam-border flex items-center justify-center"
+            >
+              <div className="flex flex-col items-center gap-3">
+                <RefreshCcw size={32} className="text-slate-300 animate-spin" />
+                <p className="text-slate-400 text-xs font-black uppercase tracking-widest">
+                  Memuat data peserta...
+                </p>
+              </div>
+            </motion.div>
+
+          ) : sortedGroups.length > 0 ? (
+            sortedGroups.map(([status, siswaGroup], idx) => (
+              <motion.div
+                key={status}
+                initial={{ opacity: 0, scale: 0.98 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.98 }}
+                transition={{ delay: idx * 0.05 }}
+                className="bg-white rounded border border-exam-border shadow-sm overflow-hidden"
+              >
+                {/* Group Header */}
+                <div className="p-5 bg-navy border-b border-white/10 text-white">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-light-blue">{getStatusIcon(status)}</span>
+                      <span className="text-[10px] font-black uppercase tracking-widest text-light-blue">
+                        Status: {status}
+                      </span>
+                    </div>
+                    <span className="bg-white/10 px-2 py-1 rounded text-[9px] font-black uppercase tracking-widest border border-white/10">
+                      {siswaGroup.length} Siswa
+                    </span>
+                  </div>
+                </div>
+
+                {/* Siswa Grid */}
+                <div className="p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 bg-slate-50/50">
+                  {siswaGroup.map(s => (
+                    <div
+                      key={s.id}
+                      className="bg-white p-3 rounded border border-slate-200 shadow-sm flex flex-col gap-3 hover:border-light-blue transition-all"
+                    >
+                      {/* Siswa Info */}
+                      <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[10px] font-black text-navy uppercase truncate">
+                            {s.siswa?.nama || `Siswa #${s.id_siswa}`}
+                          </p>
+                          <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tighter">
+                            Mulai: {fmtTime(s.waktu_mulai)}
+                          </p>
+                        </div>
+                        <div className="w-5 h-5 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 shrink-0">
+                          <User size={10} />
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-sm font-bold text-navy truncate max-w-[200px]">{data.nama_siswa}</p>
-                        <p className="text-[10px] font-mono font-bold text-light-blue">{data.nisn}</p>
+
+                      {/* Status & Nilai */}
+                      <div className="flex-1 flex flex-col gap-1.5 py-1">
+                        <div className={cn(
+                          "inline-flex items-center gap-1 px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border self-start",
+                          getStatusStyle(s.status)
+                        )}>
+                          {getStatusIcon(s.status)}
+                          {s.status}
+                        </div>
+
+                        {s.status === 'dinilai' && s.nilai_akhir != null ? (
+                          <p className="text-xl font-black text-navy italic tracking-tighter text-center">
+                            {s.nilai_akhir}
+                          </p>
+                        ) : (
+                          <p className="text-[9px] font-black text-slate-300 italic uppercase text-center">
+                            {s.status === 'dinilai' ? '—' : 'Pending'}
+                          </p>
+                        )}
+
+                        <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tighter text-center">
+                          {fmtDate(s.waktu_mulai)}
+                        </p>
+                      </div>
+
+                      {/* Tombol Reset */}
+                      <div className="pt-1">
+                        <button
+                          onClick={() => handleReset(s.id)}
+                          disabled={isResetting === s.id}
+                          className="w-full py-1.5 flex items-center justify-center gap-1.5 bg-red-50 text-red-500 rounded border border-red-100 hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50 text-[9px] font-black uppercase tracking-widest"
+                        >
+                          <Trash2 size={12} className={isResetting === s.id ? 'animate-spin' : ''} />
+                          Reset Sesi
+                        </button>
                       </div>
                     </div>
-                  </td>
-                  <td className="px-8 py-5">
-                    <div className={cn(
-                      "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[9px] font-black uppercase tracking-widest border",
-                      getStatusColor(data.status)
-                    )}>
-                      {getStatusIcon(data.status)}
-                      {data.status}
-                    </div>
-                  </td>
-                  <td className="px-8 py-5">
-                    <p className="text-[10px] text-slate-600 font-black uppercase tracking-tighter">{new Date(data.waktu_mulai).toLocaleTimeString()}</p>
-                    <p className="text-[9px] text-slate-400 font-bold uppercase">{new Date(data.waktu_mulai).toLocaleDateString()}</p>
-                  </td>
-                  <td className="px-8 py-5 text-right">
-                    {data.status === 'dinilai' ? (
-                      <span className="text-xl font-black text-navy italic tracking-tighter">{data.nilai_akhir}</span>
-                    ) : (
-                      <span className="text-[10px] font-black text-slate-300 italic uppercase">Pending</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  ))}
+                </div>
+              </motion.div>
+            ))
+
+          ) : (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="bg-white p-12 rounded border border-dashed border-slate-200 flex flex-col items-center justify-center text-center space-y-4"
+            >
+              <div className="w-16 h-16 rounded-full bg-slate-50 flex items-center justify-center text-slate-200">
+                <CheckCircle2 size={40} />
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-navy uppercase tracking-widest italic">
+                  Tidak Ada Peserta
+                </h3>
+                <p className="text-[10px] text-slate-400 font-bold uppercase tracking-tight">
+                  Belum ada siswa yang mengikuti ujian ini.
+                </p>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );

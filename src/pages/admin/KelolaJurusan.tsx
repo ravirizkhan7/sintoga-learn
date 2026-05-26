@@ -8,61 +8,130 @@ import {
   BookOpen,
   ChevronLeft,
   ChevronRight,
-  SearchX
+  SearchX,
+  RefreshCcw
 } from 'lucide-react';
-import { mockJurusan } from '../../lib/mockData';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import api from '../../lib/axios';
 
 const ITEMS_PER_PAGE = 5;
 
 export default function KelolaJurusan() {
   const [searchTerm, setSearchTerm] = useState('');
-  const [jurusan, setJurusan] = useState(mockJurusan);
+  const [jurusan, setJurusan] = useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingJurusan, setEditingJurusan] = useState<any | null>(null);
+  const [deletingJurusan, setDeletingJurusan] = useState<any | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
-
-  // Reset page when search changes
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
     nama_jurusan: '',
     kode_jurusan: ''
   });
 
-  const handleAdd = (e: React.FormEvent) => {
+  const fetchData = async () => {
+    try {
+      setIsLoading(true);
+      setFetchError(null);
+
+      const res = await api.get('/jurusan');
+
+      console.log('response jurusan:', res.data); // ← hapus setelah konfirmasi
+
+      const raw = res.data?.data;
+      const data = Array.isArray(raw) ? raw : raw?.data ?? [];
+
+      setJurusan(data);
+    } catch (err: any) {
+      console.error("Gagal ambil data jurusan:", err);
+      setFetchError(err.response?.data?.message || "Gagal mengambil data dari server");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
+  const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newJurusan = {
-      id: Date.now(),
-      ...formData
-    };
-    setJurusan([...jurusan, newJurusan]);
-    setIsModalOpen(false);
-    setFormData({ nama_jurusan: '', kode_jurusan: '' });
+    try {
+      await api.post('/jurusan', formData);
+      setIsModalOpen(false);
+      setFormData({ nama_jurusan: '', kode_jurusan: '' });
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Gagal menambah jurusan");
+    }
   };
 
-  const handleUpdate = (e: React.FormEvent) => {
+  const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
-    setJurusan(jurusan.map(j => j.id === editingJurusan.id ? editingJurusan : j));
-    setEditingJurusan(null);
+    try {
+      await api.put(`/jurusan/${editingJurusan.id}`, {
+        nama_jurusan: editingJurusan.nama_jurusan,
+        kode_jurusan: editingJurusan.kode_jurusan,
+      });
+      setEditingJurusan(null);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Gagal update jurusan");
+    }
   };
 
-  const handleDelete = (id: number) => {
-    setJurusan(jurusan.filter(j => j.id !== id));
+  const handleDelete = async (j: any) => {
+    try {
+      await api.delete(`/jurusan/${j.id}`);
+      setDeletingJurusan(null);
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.message || "Gagal menghapus jurusan");
+    }
   };
 
-  const filteredJurusan = jurusan.filter(j => 
-    j.nama_jurusan.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    j.kode_jurusan.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredJurusan = jurusan.filter(j =>
+    j.nama_jurusan?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    j.kode_jurusan?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  // Pagination logic
-  const totalPages = Math.ceil(filteredJurusan.length / ITEMS_PER_PAGE);
+  const totalPages = Math.ceil(filteredJurusan.length / ITEMS_PER_PAGE) || 1;
   const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
   const paginatedJurusan = filteredJurusan.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+  // ─── Loading State ───────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-slate-400 text-xs font-black uppercase tracking-widest animate-pulse">
+          Memuat data jurusan...
+        </p>
+      </div>
+    );
+  }
+
+  // ─── Error State ─────────────────────────────────────────────
+  if (fetchError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-64 gap-4">
+        <p className="text-red-400 text-xs font-black uppercase tracking-widest">{fetchError}</p>
+        <button
+          onClick={fetchData}
+          className="px-4 py-2 bg-navy text-white text-[10px] font-black uppercase tracking-widest rounded flex items-center gap-2"
+        >
+          <RefreshCcw size={14} />
+          Coba Lagi
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -123,7 +192,7 @@ export default function KelolaJurusan() {
                       <td className="px-8 py-5">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded bg-slate-100 flex items-center justify-center text-navy">
-                             <BookOpen size={16} />
+                            <BookOpen size={16} />
                           </div>
                           <span className="text-sm font-bold text-navy uppercase tracking-tight italic">{j.nama_jurusan}</span>
                         </div>
@@ -137,7 +206,7 @@ export default function KelolaJurusan() {
                             <Edit size={16} />
                           </button>
                           <button 
-                            onClick={() => handleDelete(j.id)}
+                            onClick={() => setDeletingJurusan(j)}
                             className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
                           >
                             <Trash2 size={16} />
@@ -175,12 +244,10 @@ export default function KelolaJurusan() {
           <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
             Showing <span className="text-navy">{paginatedJurusan.length}</span> of <span className="text-navy">{filteredJurusan.length}</span> Jurusan
           </p>
-          
           <div className="flex items-center gap-2">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-tight mr-4">
               Page <span className="text-navy">{currentPage}</span> of <span className="text-navy">{totalPages || 1}</span>
             </p>
-            
             <div className="flex bg-white border border-exam-border rounded overflow-hidden shadow-sm">
               <button 
                 onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
@@ -208,16 +275,28 @@ export default function KelolaJurusan() {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-navy/60 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-white rounded border-t-8 border-navy w-full max-w-md shadow-2xl relative overflow-hidden">
               <div className="p-6 border-b border-slate-100 italic">
-                 <h3 className="text-sm font-black text-navy uppercase tracking-widest">Input Jurusan Baru</h3>
+                <h3 className="text-sm font-black text-navy uppercase tracking-widest">Input Jurusan Baru</h3>
               </div>
               <form onSubmit={handleAdd} className="p-6 space-y-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kode Jurusan (e.g., RPL)</label>
-                  <input required type="text" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" value={formData.kode_jurusan} onChange={e => setFormData({...formData, kode_jurusan: e.target.value.toUpperCase()})} />
+                  <input 
+                    required 
+                    type="text" 
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" 
+                    value={formData.kode_jurusan} 
+                    onChange={e => setFormData({...formData, kode_jurusan: e.target.value.toUpperCase()})} 
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nama Lengkap Jurusan</label>
-                  <input required type="text" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" value={formData.nama_jurusan} onChange={e => setFormData({...formData, nama_jurusan: e.target.value})} />
+                  <input 
+                    required 
+                    type="text" 
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" 
+                    value={formData.nama_jurusan} 
+                    onChange={e => setFormData({...formData, nama_jurusan: e.target.value})} 
+                  />
                 </div>
                 <div className="pt-4 flex gap-2">
                   <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-3 text-[10px] font-black uppercase text-slate-400 hover:bg-slate-50 transition rounded">Batal</button>
@@ -236,22 +315,58 @@ export default function KelolaJurusan() {
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setEditingJurusan(null)} className="absolute inset-0 bg-navy/60 backdrop-blur-sm" />
             <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-white rounded border-t-8 border-light-blue w-full max-w-md shadow-2xl relative overflow-hidden">
               <div className="p-6 border-b border-slate-100 italic">
-                 <h3 className="text-sm font-black text-navy uppercase tracking-widest">Update Data Jurusan</h3>
+                <h3 className="text-sm font-black text-navy uppercase tracking-widest">Update Data Jurusan</h3>
               </div>
               <form onSubmit={handleUpdate} className="p-6 space-y-4">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Kode Jurusan</label>
-                  <input required type="text" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" value={editingJurusan.kode_jurusan} onChange={e => setEditingJurusan({...editingJurusan, kode_jurusan: e.target.value.toUpperCase()})} />
+                  <input 
+                    required 
+                    type="text" 
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" 
+                    value={editingJurusan.kode_jurusan} 
+                    onChange={e => setEditingJurusan({...editingJurusan, kode_jurusan: e.target.value.toUpperCase()})} 
+                  />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nama Jurusan</label>
-                  <input required type="text" className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" value={editingJurusan.nama_jurusan} onChange={e => setEditingJurusan({...editingJurusan, nama_jurusan: e.target.value})} />
+                  <input 
+                    required 
+                    type="text" 
+                    className="w-full px-4 py-2 bg-slate-50 border border-slate-200 rounded font-bold text-xs text-navy outline-none focus:border-light-blue" 
+                    value={editingJurusan.nama_jurusan} 
+                    onChange={e => setEditingJurusan({...editingJurusan, nama_jurusan: e.target.value})} 
+                  />
                 </div>
                 <div className="pt-4 flex gap-2">
                   <button type="button" onClick={() => setEditingJurusan(null)} className="flex-1 py-3 text-[10px] font-black uppercase text-slate-400 hover:bg-slate-50 transition rounded">Batal</button>
                   <button type="submit" className="flex-2 py-3 bg-light-blue text-white text-[10px] font-black uppercase tracking-widest rounded shadow-lg shadow-light-blue/20 active:scale-95">Update Data</button>
                 </div>
               </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {deletingJurusan && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setDeletingJurusan(null)} className="absolute inset-0 bg-navy/60 backdrop-blur-sm" />
+            <motion.div initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} className="bg-white rounded border-b-8 border-red-500 w-full max-w-sm shadow-2xl relative overflow-hidden">
+              <div className="p-8 text-center">
+                <div className="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Trash2 size={32} />
+                </div>
+                <h3 className="text-xl font-black text-navy uppercase italic tracking-tighter mb-2">Hapus Jurusan</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-tight leading-relaxed">
+                  Apakah Anda yakin ingin menghapus jurusan <span className="text-navy">{deletingJurusan.nama_jurusan}</span>? Siswa yang terdaftar di jurusan ini akan kehilangan relasi jurusannya.
+                </p>
+              </div>
+              <div className="flex border-t border-slate-100">
+                <button onClick={() => setDeletingJurusan(null)} className="flex-1 px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 hover:bg-slate-50 border-r border-slate-100">Batal</button>
+                <button onClick={() => handleDelete(deletingJurusan)} className="flex-1 px-6 py-4 text-[10px] font-black uppercase tracking-widest bg-red-500 text-white hover:bg-red-600 transition shadow-inner">Hapus Jurusan</button>
+              </div>
             </motion.div>
           </div>
         )}

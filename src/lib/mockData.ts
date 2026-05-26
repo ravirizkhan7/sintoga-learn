@@ -11,10 +11,12 @@ import {
 } from '../types';
 
 export const mockUsers: User[] = [
-  { id: 1, email: 'admin@gmail.com', nama_lengkap: 'Super Admin', role: 'admin' },
-  { id: 2, email: 'guru@gmail.com', nama_lengkap: 'Budi Santoso, S.Pd', role: 'guru' },
-  { id: 3, email: 'siswa@gmail.com', nama_lengkap: 'Siswa Teladan', role: 'siswa', nisn: '12345678', id_jurusan: 1 },
-  { id: 4, email: 'calon@gmail.com', nama_lengkap: 'Calon Siswa Baru', role: 'siswa' },
+  // { id: 1, email: 'admin@gmail.com', name: 'Super Admin', role: 'admin' },
+  // { id: 2, email: 'guru@gmail.com', name: 'Budi Santoso, S.Pd', role: 'guru' },
+  // { id: 3, email: 'siswa@gmail.com', name: 'Siswa Teladan', role: 'siswa', nisn: '12345678', id_jurusan: 1 },
+  // { id: 4, email: 'calon@gmail.com', name: 'Calon Siswa Baru', role: 'siswa' },
+
+  // const res = await fetch('/');
 ];
 
 export const mockJurusan: Jurusan[] = [

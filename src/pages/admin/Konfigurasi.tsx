@@ -1,31 +1,86 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Globe, 
-  MapPin, 
   RefreshCcw, 
-  Lock, 
-  Save, 
-  ShieldCheck, 
-  Server,
-  Zap,
-  AlertTriangle,
-  Settings2
+  Edit2,
+  Check,
+  X,
+  Settings2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { motion, AnimatePresence } from 'motion/react';
+import api from '../../lib/axios';
+
+interface PengaturanItem {
+  id: number;
+  key: string;
+  value: string;
+  keterangan: string;
+}
 
 export default function Konfigurasi() {
-  const [ipGateway, setIpGateway] = useState('192.168.1.1');
-  const [lockLocation, setLockLocation] = useState(true);
+  const [settings, setSettings] = useState<PengaturanItem[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [fetchError, setFetchError] = useState<string | null>(null);
 
-  const [isRunning, setIsRunning] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<Partial<PengaturanItem>>({});
 
-  const runMaintenance = (type: string) => {
-    setIsRunning(true);
-    setTimeout(() => {
-      setIsRunning(false);
-      alert(`Berhasil: ${type} telah diselesaikan.`);
-    }, 1500);
+  const fetchSettings = async () => {
+    try {
+      setIsLoading(true);
+      setFetchError(null);
+      const res = await api.get('/pengaturan');
+      const raw = res.data?.data;
+      setSettings(Array.isArray(raw) ? raw : []);
+    } catch (err: any) {
+      setFetchError(err.response?.data?.message || 'Gagal mengambil konfigurasi');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSettings();
+  }, []);
+
+  const startEdit = (item: PengaturanItem) => {
+    setEditingId(item.id);
+    setEditForm({ key: item.key, value: item.value, keterangan: item.keterangan });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({});
+  };
+
+  const saveEdit = async (item: PengaturanItem) => {
+    if (!editForm.value?.trim()) {
+      alert('Value tidak boleh kosong');
+      return;
+    }
+    try {
+      setIsSaving(true);
+
+      // ← Sesuai backend: kirim semua pengaturan yang ada,
+      // update hanya yang sedang diedit, sisanya pakai nilai lama
+      const payload = {
+        pengaturan: settings.map(s => ({
+          key: s.key,
+          value: s.id === item.id ? editForm.value!.trim() : s.value,
+        }))
+      };
+
+      await api.put('/pengaturan', payload);
+      setEditingId(null);
+      setEditForm({});
+      fetchSettings();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Gagal menyimpan perubahan');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -35,118 +90,145 @@ export default function Konfigurasi() {
         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Parameter keamanan & Jaringan infrastruktur</p>
       </motion.div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            className="bg-white rounded border border-exam-border shadow-sm overflow-hidden"
-          >
-            <div className="p-4 bg-slate-50/30 border-b border-slate-100 flex items-center gap-2">
-              <Globe size={14} className="text-light-blue" />
-              <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Network Gateway Control</h3>
-            </div>
-            <div className="p-8 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">IP Gateway Address</label>
-                  <input 
-                    type="text" 
-                    value={ipGateway}
-                    onChange={(e) => setIpGateway(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded outline-none focus:border-light-blue transition text-sm font-bold font-mono shadow-inner" 
-                  />
-                  <p className="text-[9px] text-slate-400 font-medium italic">Batasi akses ujian hanya dari IP tertentu.</p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none">Subnet Mask</label>
-                  <input type="text" value="255.255.255.0" disabled className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded outline-none text-sm font-bold font-mono text-slate-300 cursor-not-allowed" />
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-blue-50/50 border border-blue-100 rounded">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-light-blue text-white rounded flex items-center justify-center shadow-lg shadow-light-blue/20">
-                    <MapPin size={18} />
-                  </div>
-                  <div>
-                    <h4 className="text-[10px] font-black text-navy uppercase tracking-widest">Enforce Geographical Lock</h4>
-                    <p className="text-[9px] text-slate-400 font-bold italic">Gunakan Geolocation API untuk validasi lokasi fisik siswa.</p>
-                  </div>
-                </div>
-                <button 
-                  onClick={() => setLockLocation(!lockLocation)}
-                  className={cn(
-                    "w-12 h-6 rounded-full transition-colors relative shadow-inner",
-                    lockLocation ? 'bg-exam-success' : 'bg-slate-300'
-                  )}
-                >
-                  <div className={cn(
-                    "absolute top-1 w-4 h-4 bg-white rounded-full transition-all shadow-md",
-                    lockLocation ? 'right-1' : 'left-1'
-                  )} />
-                </button>
-              </div>
-            </div>
-          </motion.div>
-
-          <motion.div 
-            initial={{ opacity: 0, x: -20 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.1 }}
-            className="bg-white rounded border border-exam-border shadow-sm overflow-hidden"
-          >
-            <div className="p-4 bg-slate-50/30 border-b border-slate-100 flex items-center gap-2">
-              <RefreshCcw size={14} className="text-light-blue" />
-              <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Database Maintenance</h3>
-            </div>
-            <div className="p-8 grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <button 
-                disabled={isRunning}
-                onClick={() => runMaintenance('Cleanup Logs')}
-                className="flex items-center justify-center gap-3 py-4 border-2 border-dashed border-slate-200 rounded-lg text-slate-400 font-black text-[10px] uppercase tracking-widest hover:border-light-blue hover:text-light-blue transition group disabled:opacity-50"
-              >
-                {isRunning ? <RefreshCcw size={18} className="animate-spin" /> : <RefreshCcw size={18} className="group-hover:rotate-180 transition-transform duration-500" />}
-                Cleanup Logs
-              </button>
-              <button 
-                disabled={isRunning}
-                onClick={() => runMaintenance('Reset Semester')}
-                className="flex items-center justify-center gap-3 py-4 border-2 border-dashed border-slate-200 rounded-lg text-slate-400 font-black text-[10px] uppercase tracking-widest hover:border-red-500 hover:text-red-500 transition group disabled:opacity-50"
-              >
-                {isRunning ? <RefreshCcw size={18} className="animate-spin" /> : <RefreshCcw size={18} className="group-hover:rotate-180 transition-transform duration-500" />}
-                Reset Semester
-              </button>
-            </div>
-          </motion.div>
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-white rounded border border-exam-border shadow-sm overflow-hidden"
+      >
+        {/* Header */}
+        <div className="p-4 bg-slate-50/30 border-b border-slate-100 flex items-center gap-2">
+          <Globe size={14} className="text-light-blue" />
+          <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Network Gateway Control</h3>
         </div>
 
-        <div className="space-y-6">
-          <motion.div 
-            whileHover={{ y: -5 }}
-            className="bg-navy rounded-lg p-6 text-white shadow-xl shadow-navy/20 border-b-4 border-light-blue"
-          >
-            <Lock size={32} className="mb-4 text-light-blue" />
-            <h3 className="text-xl font-black italic tracking-tighter uppercase mb-2">System Authority</h3>
-            <p className="text-[10px] text-blue-100/50 font-bold uppercase tracking-widest mb-6 leading-relaxed">
-              Semua perubahan parameter keamanan akan dicatat ke dalam audit log sistem secara permanen.
+        {/* Tabel */}
+        <div className="overflow-x-auto">
+          {isLoading ? (
+            <div className="flex items-center justify-center h-48">
+              <p className="text-slate-400 text-xs font-black uppercase tracking-widest animate-pulse">Memuat konfigurasi...</p>
+            </div>
+          ) : fetchError ? (
+            <div className="flex flex-col items-center justify-center h-48 gap-3">
+              <p className="text-red-400 text-xs font-black uppercase tracking-widest">{fetchError}</p>
+              <button
+                onClick={fetchSettings}
+                className="px-4 py-2 bg-navy text-white text-[10px] font-black uppercase tracking-widest rounded flex items-center gap-2"
+              >
+                <RefreshCcw size={12} /> Coba Lagi
+              </button>
+            </div>
+          ) : (
+            <table className="w-full min-w-[600px]">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100 text-left">
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[25%]">Key</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[30%]">Value</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Keterangan</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right w-[100px]">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {settings.length > 0 ? settings.map((item) => (
+                  <motion.tr
+                    key={item.id}
+                    layout
+                    className={cn(
+                      'transition-colors',
+                      editingId === item.id ? 'bg-amber-50/40' : 'hover:bg-slate-50/50'
+                    )}
+                  >
+                    {/* Key — tidak bisa diubah, read-only */}
+                    <td className="px-6 py-4">
+                      <span className="text-xs font-mono font-black text-light-blue">{item.key}</span>
+                    </td>
+
+                    {/* Value — bisa diedit */}
+                    <td className="px-4 py-3">
+                      {editingId === item.id ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          placeholder="Contoh: 192.168.1.1"
+                          className="w-full px-3 py-2 bg-white border border-amber-300 rounded text-xs font-mono font-bold text-navy outline-none focus:ring-2 focus:ring-amber-200"
+                          value={editForm.value ?? ''}
+                          onChange={e => setEditForm({ ...editForm, value: e.target.value })}
+                          onKeyDown={e => e.key === 'Enter' && saveEdit(item)}
+                          onKeyUp={e => e.key === 'Escape' && cancelEdit()}
+                        />
+                      ) : (
+                        <span className="text-xs font-bold text-navy font-mono">{item.value}</span>
+                      )}
+                    </td>
+
+                    {/* Keterangan — read-only */}
+                    <td className="px-6 py-4">
+                      <span className="text-xs text-slate-400 font-medium italic">{item.keterangan || '-'}</span>
+                    </td>
+
+                    {/* Aksi */}
+                    <td className="px-4 py-3 text-right">
+                      {editingId === item.id ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button
+                            onClick={() => saveEdit(item)}
+                            disabled={isSaving}
+                            className="p-1.5 bg-exam-success text-white rounded hover:bg-exam-success/90 transition disabled:opacity-50"
+                            title="Simpan (Enter)"
+                          >
+                            {isSaving
+                              ? <RefreshCcw size={13} className="animate-spin" />
+                              : <Check size={13} />
+                            }
+                          </button>
+                          <button
+                            onClick={cancelEdit}
+                            className="p-1.5 bg-slate-100 text-slate-500 rounded hover:bg-slate-200 transition"
+                            title="Batal (Esc)"
+                          >
+                            <X size={13} />
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => startEdit(item)}
+                          className="p-2 text-slate-400 hover:text-amber-500 hover:bg-amber-50 rounded transition-colors"
+                          title="Edit value"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                      )}
+                    </td>
+                  </motion.tr>
+                )) : (
+                  <tr>
+                    <td colSpan={4} className="px-6 py-20 text-center">
+                      <div className="flex flex-col items-center gap-2 opacity-25">
+                        <Settings2 size={48} />
+                        <p className="text-[10px] font-black uppercase tracking-widest">Belum ada konfigurasi</p>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        {!isLoading && !fetchError && (
+          <div className="p-3 border-t border-slate-100 bg-slate-50/30 flex items-center justify-between">
+            <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest">
+              Total: <span className="text-navy">{settings.length}</span> konfigurasi
             </p>
-            <button className="w-full bg-light-blue hover:bg-light-blue/90 text-white font-black py-4 rounded text-[10px] uppercase tracking-[0.2em] transition flex items-center justify-center gap-2 active:scale-95">
-              <Save size={16} />
-              Commit Changes
+            <button
+              onClick={fetchSettings}
+              className="flex items-center gap-1 text-[9px] font-black text-slate-400 hover:text-navy uppercase tracking-widest transition"
+            >
+              <RefreshCcw size={10} /> Refresh
             </button>
-          </motion.div>
-
-          <motion.div 
-            whileHover={{ scale: 1.02 }}
-            className="bg-white rounded border border-exam-border shadow-sm p-6 text-center"
-          >
-            <ShieldCheck size={40} className="mx-auto text-exam-success mb-4" />
-            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">System Health Score</p>
-            <h4 className="text-3xl font-black text-navy italic tracking-tighter">99.8 / 100</h4>
-          </motion.div>
-        </div>
-      </div>
+          </div>
+        )}
+      </motion.div>
     </div>
   );
 }
