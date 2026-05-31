@@ -18,7 +18,7 @@ type TipeUjian = 'Semua' | 'STS' | 'UTS' | 'UAS' | 'Harian';
 // ─── Types ────────────────────────────────────────────────────
 
 interface RiwayatItem {
-  id: number;                    // ← siswa_ujian.id
+  id: number;
   ujian_id: number;
   siswa_id: number;
   waktu_mulai: string | null;
@@ -28,6 +28,15 @@ interface RiwayatItem {
   urutan_soal?: any[];
   created_at?: string;
   updated_at?: string;
+  // ✅ Tambah field ujian (nested object dari relasi)
+  ujian?: {
+    id: number;
+    judul_ujian: string;
+    tipe_ujian?: string;
+    mata_pelajaran?: string;
+  };
+  // ✅ Atau flat field kalau backend return langsung
+  judul_ujian?: string;
 }
 
 interface PilihanJawaban {
@@ -65,6 +74,20 @@ interface DetailHasil {
   jawabans: JawabanItem[];
 }
 
+// ─── Helper: ambil judul ujian dari item ─────────────────────
+// Fleksibel — handle nested object atau flat field
+const getJudulUjian = (item: RiwayatItem): string => {
+  return (
+    item.ujian?.judul_ujian ||
+    item.judul_ujian ||
+    `Ujian #${item.ujian_id}`  // fallback terakhir
+  );
+};
+
+const getTipeUjian = (item: RiwayatItem): string | null => {
+  return item.ujian?.tipe_ujian || null;
+};
+
 // ─── Component ────────────────────────────────────────────────
 export default function HistoriSiswa() {
   const [filterType, setFilterType] = useState<TipeUjian>('Semua');
@@ -81,8 +104,6 @@ export default function HistoriSiswa() {
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
   // ─── Fetch list riwayat ───────────────────────────────────────
-  // Endpoint: GET /ujian/riwayat
-  // Response: { data: { current_page, data[], ... } }
   const fetchRiwayat = async () => {
     try {
       setIsLoadingList(true);
@@ -106,9 +127,6 @@ export default function HistoriSiswa() {
   };
 
   // ─── Fetch detail hasil ────────────────────────────────────────
-  // Endpoint: GET /ujian/{siswaUjian}/detail
-  // {siswaUjian} = item.id (ID dari siswa_ujian)
-  // Response: { data: { siswa, nilai_akhir, breakdown[], jawabans[] } }
   const fetchDetail = async (item: RiwayatItem) => {
     try {
       setIsLoadingDetail(true);
@@ -134,7 +152,6 @@ export default function HistoriSiswa() {
     }
   };
 
-  // ─── Load data saat mount ──────────────────────────────────────
   useEffect(() => {
     fetchRiwayat();
   }, []);
@@ -161,11 +178,12 @@ export default function HistoriSiswa() {
               <History size={14} className="text-light-blue" />
               <span className="text-[9px] font-black uppercase tracking-widest">Detail Hasil Ujian</span>
             </div>
-            <h1 className="text-3xl font-black italic tracking-tighter mb-2 uppercase">
-              {detail.siswa || 'Siswa'}
+            {/* ✅ Tampilkan judul ujian di header detail */}
+            <h1 className="text-3xl font-black italic tracking-tighter mb-1 uppercase">
+              {getJudulUjian(selectedItem)}
             </h1>
             <p className="text-blue-100/70 text-[10px] font-black uppercase tracking-widest">
-              Status: {selectedItem.status}
+              {detail.siswa} · Status: {selectedItem.status}
             </p>
           </div>
           <div className="absolute top-1/2 right-12 -translate-y-1/2 text-right hidden sm:block">
@@ -197,7 +215,6 @@ export default function HistoriSiswa() {
                   key={soal.id} 
                   className="bg-white border border-exam-border rounded-lg overflow-hidden shadow-sm"
                 >
-                  {/* Card Header */}
                   <div className={cn(
                     "px-6 py-3 flex items-center justify-between border-b",
                     isCorrect ? "bg-green-50 border-green-100" : "bg-red-50 border-red-100"
@@ -221,7 +238,6 @@ export default function HistoriSiswa() {
                     </div>
                   </div>
 
-                  {/* Card Body */}
                   <div className="p-6">
                     {gambarUrl && (
                       <img
@@ -235,7 +251,6 @@ export default function HistoriSiswa() {
                     </p>
 
                     <div className="space-y-2">
-                      {/* Pilihan Ganda / Objektif */}
                       {['objektif', 'ganda_kompleks'].includes(soal.tipe_soal) && 
                         soal.pilihan_jawaban.map(p => {
                           const isSelected = jawaban_siswa?.id_pilihan_terpilih?.includes(p.id);
@@ -275,7 +290,6 @@ export default function HistoriSiswa() {
                         })
                       }
 
-                      {/* Menjodohkan */}
                       {soal.tipe_soal === 'menjodohkan' && (
                         <div className="space-y-2">
                           {soal.pilihan_jawaban.map(p => {
@@ -298,7 +312,6 @@ export default function HistoriSiswa() {
                         </div>
                       )}
 
-                      {/* Isian / Essay */}
                       {['isian', 'essay'].includes(soal.tipe_soal) && (
                         <div className="space-y-3">
                           <div className="p-4 bg-slate-50 rounded border border-slate-100">
@@ -383,12 +396,27 @@ export default function HistoriSiswa() {
             >
               <div className="p-6 bg-slate-50/50 border-b border-slate-100 flex justify-between items-start">
                 <div className="flex flex-col gap-1 min-w-0 flex-1">
-                  <span className="px-2 py-0.5 bg-navy text-white text-[8px] font-black uppercase tracking-widest rounded w-fit">
-                    Ujian #{item.ujian_id}
-                  </span>
-                  <h3 className="text-sm font-black text-navy uppercase tracking-tighter leading-tight group-hover:text-light-blue transition-colors mt-2 truncate">
-                    {item.status}
+                  {/* ✅ Badge tipe ujian kalau ada, fallback ke ujian_id */}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="px-2 py-0.5 bg-navy text-white text-[8px] font-black uppercase tracking-widest rounded w-fit">
+                      {getTipeUjian(item) || `Ujian #${item.ujian_id}`}
+                    </span>
+                    {getTipeUjian(item) && (
+                      <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest">
+                        #{item.ujian_id}
+                      </span>
+                    )}
+                  </div>
+                  {/* ✅ Judul ujian — bukan status lagi */}
+                  <h3 className="text-sm font-black text-navy uppercase tracking-tighter leading-tight group-hover:text-light-blue transition-colors mt-2 line-clamp-2">
+                    {getJudulUjian(item)}
                   </h3>
+                  {/* ✅ Mata pelajaran sebagai subtitle kalau ada */}
+                  {item.ujian?.mata_pelajaran && (
+                    <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
+                      {item.ujian.mata_pelajaran}
+                    </p>
+                  )}
                 </div>
                 <div className="text-right shrink-0 ml-3">
                   <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest">NILAI AKHIR</p>

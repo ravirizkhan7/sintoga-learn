@@ -94,21 +94,38 @@ export default function MonitorGuru() {
   };
 
   // ─── Fetch peserta ujian (pakai endpoint /manual) ──────────
-  const fetchSiswaUjian = async (ujian: number) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const res = await api.get(`/ujian/${ujian}/hasil`);
-      const raw = res.data?.data;
-      const data: SiswaUjian[] = Array.isArray(raw) ? raw : raw?.data ?? [];
-      setSiswaList(data);
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Gagal mengambil data peserta');
-      setSiswaList([]);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+const fetchSiswaUjian = async (ujian: number) => {
+  try {
+    setIsLoading(true);
+    setError(null);
+    const res = await api.get(`/ujian/${ujian}/hasil`);
+    const raw = res.data?.data;
+
+    // raw = { ujian, statistik, siswa_ujian[] }
+    const siswaUjian = raw?.siswa_ujian ?? [];
+
+    // Map ke shape SiswaUjian yang dipakai komponen ini
+    const data: SiswaUjian[] = siswaUjian.map((s: any) => ({
+      id: s.siswa_ujian_id,  // ← fix di sini, bukan s.id ?? 0
+      id_ujian: ujian,
+      id_siswa: typeof s.siswa === 'object' ? s.siswa?.id : 0,
+      status: s.status,
+      waktu_mulai: s.waktu_mulai,
+      waktu_selesai: s.waktu_selesai,
+      nilai_akhir: s.nilai_akhir != null ? Number(s.nilai_akhir) : null,
+      siswa: typeof s.siswa === 'object'
+        ? { id: s.siswa.id, nama: s.siswa.nama }
+        : { id: 0, nama: String(s.siswa ?? '-') },
+    }));
+
+    setSiswaList(data);
+  } catch (err: any) {
+    setError(err.response?.data?.message || 'Gagal mengambil data peserta');
+    setSiswaList([]);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   useEffect(() => { fetchUjians(); }, []);
   useEffect(() => { if (selectedUjianId) fetchSiswaUjian(selectedUjianId); }, [selectedUjianId]);

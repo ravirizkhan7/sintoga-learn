@@ -93,7 +93,9 @@ export default function PenilaianManual() {
       const res = await api.get(`/ujian/${ujianId}/manual`);
       const raw = res.data?.data;
       
-      // Response bisa berupa array atau object dengan data property
+      console.log('raw:', raw);                          // lihat bentuk aslinya
+      console.log('sample[0]:', raw?.[0] ?? raw?.data?.[0]); // lihat field yang ada
+      
       const data = Array.isArray(raw) ? raw : raw?.data ?? [];
       setPendingAnswers(data);
     } catch (err: any) {
