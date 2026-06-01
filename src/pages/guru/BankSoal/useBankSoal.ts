@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import api from '../../../lib/axios';
+import api, { APP_URL } from '../../../lib/axios';
 import {
   BankSoal, PengaturanUjian, DaftarUjian,
   NewSoalState, BobotForm, PilihanInternal
@@ -23,7 +23,7 @@ export const getInitialSoalState = (): NewSoalState => ({
   pilihan: [makePilihan({ is_true: true, persentase_nilai: 100 })],
 });
 
-export const BASE_STORAGE_URL = 'http://web-ujian-production.up.railway.app/storage/';
+export const BASE_STORAGE_URL = `${APP_URL}/storage/`;
 
 const soalToFormState = (soal: BankSoal): NewSoalState => ({
   tipe_soal: soal.tipe_soal,
@@ -39,19 +39,7 @@ const soalToFormState = (soal: BankSoal): NewSoalState => ({
   })),
 });
 
-// ─── Helper: convert File → base64 string ────────────────────
-// const fileToBase64 = (file: File): Promise<string> =>
-//   new Promise((resolve, reject) => {
-//     const reader = new FileReader();
-//     reader.onload = () => resolve(reader.result as string);
-//     reader.onerror = reject;
-//     reader.readAsDataURL(file);
-//   });
-
 export function useBankSoal(ujianId: number | null) {
-  // ← DIHAPUS: useNavigate dan navigate('/guru')
-  // Ini penyebab bug navigasi — saat klik menu lain, BankSoalGuru unmount,
-  // ujianId jadi null, useEffect jalan, navigate('/guru') dipanggil → redirect paksa
 
   const [ujianInfo, setUjianInfo] = useState<DaftarUjian | null>(null);
   const [soalList, setSoalList] = useState<BankSoal[]>([]);
@@ -120,7 +108,7 @@ export function useBankSoal(ujianId: number | null) {
   };
 
   useEffect(() => {
-    if (!ujianId) return; // ← FIX: cukup return, jangan navigate('/guru')
+    if (!ujianId) return;
     fetchUjianInfo();
     fetchSoal();
     fetchPengaturan();
