@@ -8,11 +8,8 @@ import { PilihanJawaban } from '../../types';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../App';
-import api, { APP_URL } from '../../lib/axios'; // FIX 1: tambah APP_URL untuk URL gambar
+import api, { APP_URL } from '../../lib/axios';
 
-// ─────────────────────────────────────────────
-// Konstanta URL gambar — sama polanya dengan SoalList.tsx guru
-// ─────────────────────────────────────────────
 const BASE_STORAGE_URL = `${APP_URL}/storage/`;
 
 // ─────────────────────────────────────────────
@@ -24,7 +21,7 @@ interface SoalResponse {
   teks_soal: string;
   tipe_soal: 'objektif' | 'ganda_kompleks' | 'isian' | 'essay' | 'menjodohkan';
   pilihan_jawaban: PilihanJawaban[];
-  path_gambar?: string | null; // FIX 1: tambah field gambar
+  path_gambar?: string | null;
 }
 
 interface LocationState {
@@ -51,7 +48,7 @@ interface LocationState {
 type FinishReason = 'manual' | 'timeout' | 'violation';
 
 // ─────────────────────────────────────────────
-// Seeded shuffle — hasil acak stabil per seed
+// Seeded shuffle
 // ─────────────────────────────────────────────
 const seededShuffle = <T,>(array: T[], seed: number): T[] => {
   const shuffled = [...array];
@@ -66,7 +63,7 @@ const seededShuffle = <T,>(array: T[], seed: number): T[] => {
 };
 
 // ─────────────────────────────────────────────
-// MatchingInterface — soal menjodohkan
+// MatchingInterface
 // ─────────────────────────────────────────────
 interface MatchingProps {
   soalId: number;
@@ -149,7 +146,6 @@ function MatchingInterface({ soalId, pilihan, jawaban, onAnswer }: MatchingProps
 
       {/* Kiri */}
       <div className="space-y-3 z-20">
-        {/* FIX: <div> bukan <p> — block element tidak boleh di dalam <p> */}
         <div className="text-[9px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
           <div className="w-1.5 h-1.5 rounded-full bg-light-blue" /> Pernyataan Utama
         </div>
@@ -246,7 +242,7 @@ export default function RuangUjian() {
   const [isSubmitting, setIsSubmitting]   = useState(false);
   const [isFinished, setIsFinished]       = useState(false);
   const [finishReason, setFinishReason]   = useState<FinishReason>('manual');
-  const [tempScore, setTempScore]         = useState(0);
+  const [tempScore, setTempScore]         = useState<string | number>(0);
 
   // ── Keamanan ────────────────────────────────────────────
   const [violations, setViolations]   = useState(0);
@@ -255,20 +251,16 @@ export default function RuangUjian() {
 
   // ── Cache & guard refs ──────────────────────────────────
   const soalCacheRef    = useRef<{ [soalId: number]: SoalResponse }>({});
-  // FIX: Guard pakai ref bukan state → tidak ada stale closure di listeners
   const isSubmittingRef = useRef(false);
   const isFinishedRef   = useRef(false);
 
   // ─────────────────────────────────────────────
-  // FIX 2: Acak pilihan jawaban — stabil per kombinasi siswa+soal
-  // Seed = soal.id * 1000 + siswaUjianId → unik & konsisten
+  // Acak pilihan jawaban — stabil per kombinasi siswa+soal
   // ─────────────────────────────────────────────
   const shuffledPilihan = useMemo(() => {
     const soal = soalList[currentIdx];
     if (!soal?.pilihan_jawaban?.length) return [];
-    // Menjodohkan: MatchingInterface urus sendiri shuffle pasangan
     if (soal.tipe_soal === 'menjodohkan') return soal.pilihan_jawaban;
-    // Objektif & ganda_kompleks: acak pilihan di sini
     return seededShuffle([...soal.pilihan_jawaban], soal.id * 1000 + siswaUjianId);
   }, [soalList, currentIdx, siswaUjianId]);
 
@@ -334,30 +326,85 @@ export default function RuangUjian() {
   }, [currentIdx, isInitializing]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─────────────────────────────────────────────
-  // Auto-save jawaban
+  // FIX: Build payload /jawaban sesuai tipe soal
+  // API expects:
+  //   objektif       → { soal_id, id_pilihan_terpilih: [id] }
+  //   ganda_kompleks → { soal_id, id_pilihan_terpilih: [id, id, ...] }
+  //   isian/essay    → { soal_id, jawaban_teks: "string" }
+  //   menjodohkan    → { soal_id, pasangan_terpilih: [{ pilihan_id, pasangan_id }] }
   // ─────────────────────────────────────────────
-  const saveJawaban = useCallback(async (soalId: number, val: any) => {
-    console.log(soalId, val);
+  const buildJawabanPayload = useCallback((soal: SoalResponse, val: any): Record<string, any> => {
+    const base: Record<string, any> = { soal_id: soal.id };
+
+    switch (soal.tipe_soal) {
+      case 'objektif':
+        // val = single pilihan id (number)
+        base.id_pilihan_terpilih = val != null ? [val] : [];
+        break;
+
+      case 'ganda_kompleks':
+        // val = array of pilihan ids
+        base.id_pilihan_terpilih = Array.isArray(val) ? val : [];
+        break;
+
+      case 'isian':
+      case 'essay':
+        // val = plain text string
+        base.jawaban_teks = String(val ?? '');
+        break;
+
+      case 'menjodohkan': {
+        // val = { teks_pilihan: teks_pasangan, ... } (text-based map dari MatchingInterface)
+        // Convert ke format ID: [{ pilihan_id, pasangan_id }]
+        // pilihan_id  = id dari pilihan yang punya teks_pilihan === leftText
+        // pasangan_id = id dari pilihan yang punya teks_pasangan === rightText
+        const pasangan_terpilih: { pilihan_id: number; pasangan_id: number }[] = [];
+
+        if (val && typeof val === 'object') {
+          Object.entries(val as Record<string, string>).forEach(([leftText, rightText]) => {
+            const leftItem  = soal.pilihan_jawaban.find(p => p.teks_pilihan  === leftText);
+            const rightItem = soal.pilihan_jawaban.find(p => p.teks_pasangan === rightText);
+            if (leftItem && rightItem) {
+              pasangan_terpilih.push({
+                pilihan_id:  leftItem.id,
+                pasangan_id: rightItem.id,
+              });
+            }
+          });
+        }
+
+        base.pasangan_terpilih = pasangan_terpilih;
+        break;
+      }
+    }
+
+    return base;
+  }, []);
+
+  // ─────────────────────────────────────────────
+  // Auto-save jawaban — kirim payload yang sudah dipetakan
+  // ─────────────────────────────────────────────
+  const saveJawaban = useCallback(async (soal: SoalResponse, val: any) => {
     if (isFinishedRef.current) return;
     try {
-      await api.post(`/ujian/${siswaUjianId}/jawaban`, { soal_id: soalId, jawaban: val });
+      const payload = buildJawabanPayload(soal, val);
+      await api.post(`/ujian/${siswaUjianId}/jawaban`, payload);
     } catch (err: any) {
       console.warn('Auto-save gagal:', err.response?.data?.message ?? err.message);
     }
-  }, [siswaUjianId]);
+  }, [siswaUjianId, buildJawabanPayload]);
 
   const handleAnswer = (val: any) => {
     const soal = soalList[currentIdx];
     if (!soal) return;
     setJawaban(prev => ({ ...prev, [soal.id]: val }));
-    saveJawaban(soal.id, val);
+    saveJawaban(soal, val);
   };
 
   // ─────────────────────────────────────────────
   // Submit ujian
-  // FIX 3a: Guard pakai ref (tidak stale closure)
-  // FIX 3b: 422 "sudah selesai" → tetap tampilkan halaman selesai
-  //          agar siswa tidak stuck di halaman ujian tanpa bisa keluar
+  // FIX: /submit tidak butuh body — semua jawaban sudah di-save via /jawaban
+  //      Response menggunakan key `nilai_akhir` (bukan skor_sementara)
   // ─────────────────────────────────────────────
   const handleFinish = useCallback(async (reason: FinishReason = 'manual') => {
     if (isSubmittingRef.current || isFinishedRef.current) return;
@@ -366,14 +413,11 @@ export default function RuangUjian() {
     setShowConfirm(false);
 
     try {
-      const payload = Object.entries(jawaban).map(([soalId, val]) => ({
-        soal_id: Number(soalId),
-        jawaban: val,
-      }));
+      // Tidak ada request body — backend pakai jawaban yang sudah disimpan
+      const res = await api.post(`/ujian/${siswaUjianId}/submit`);
 
-      const res = await api.post(`/ujian/${siswaUjianId}/submit`, { jawaban: payload });
-
-      setTempScore(res.data?.data?.skor_sementara ?? res.data?.skor_sementara ?? res.data?.score ?? 0);
+      // Response: { message, data: { nilai_akhir, ... } }
+      setTempScore(res.data?.data?.nilai_akhir ?? 0);
       setFinishReason(reason);
       isFinishedRef.current = true;
       setIsFinished(true);
@@ -381,26 +425,23 @@ export default function RuangUjian() {
     } catch (err: any) {
       const status  = err.response?.status;
       const message: string = err.response?.data?.message ?? '';
-  console.log(err.response?.data);
+      console.log(err.response?.data);
 
-      // FIX 3b: 422 = server sudah tandai ujian selesai (bisa dari trigger sebelumnya)
-      // Tetap tampilkan halaman selesai supaya siswa bisa kembali ke dashboard
+      // 422 = server sudah tandai ujian selesai sebelumnya → tetap tampil halaman selesai
       if (status === 422) {
         setFinishReason(reason);
         isFinishedRef.current = true;
         setIsFinished(true);
       } else {
-        // Error lain (network, server) → izinkan retry
         isSubmittingRef.current = false;
         setApiError(message || 'Gagal mengirim jawaban. Coba lagi.');
       }
     } finally {
       setIsSubmitting(false);
     }
-  }, [jawaban, siswaUjianId]);
+  }, [siswaUjianId]); // tidak perlu `jawaban` di deps karena submit tidak kirim body
 
   // Ref ke handleFinish terbaru — listener yang di-attach sekali
-  // tetap memanggil versi dengan jawaban paling update
   const handleFinishRef = useRef(handleFinish);
   useEffect(() => { handleFinishRef.current = handleFinish; }, [handleFinish]);
 
@@ -408,12 +449,7 @@ export default function RuangUjian() {
   // Timer
   // ─────────────────────────────────────────────
   useEffect(() => {
-    if (isInitializing || timeLeft <= 0) {
-      // if (!isInitializing && timeLeft <= 0 && !isFinishedRef.current) {
-      //   handleFinishRef.current('timeout');
-      // }
-      return;
-    }
+    if (isInitializing || timeLeft <= 0) return;
     const iv = setInterval(() => setTimeLeft(p => p - 1), 1000);
     return () => clearInterval(iv);
   }, [timeLeft, isInitializing]);
@@ -425,9 +461,6 @@ export default function RuangUjian() {
 
   // ─────────────────────────────────────────────
   // Fullscreen & Security
-  // FIX: listener di-attach setelah delay 1.5 detik — menghindari false-positive
-  //      saat browser sedang proses requestFullscreen yang bisa bikin event
-  //      fire di awal dan auto-submit ujian sebelum dimulai.
   // ─────────────────────────────────────────────
   const exitFullscreen = () => {
     try {
@@ -500,7 +533,7 @@ export default function RuangUjian() {
     setFlagged(prev => ({ ...prev, [soal.id]: !prev[soal.id] }));
   };
 
-  const totalSoal  = urutanSoal.length > 0 ? urutanSoal.length : soalList.length;
+  const totalSoal   = urutanSoal.length > 0 ? urutanSoal.length : soalList.length;
   const currentSoal = soalList[currentIdx];
 
   // ─────────────────────────────────────────────
@@ -550,7 +583,6 @@ export default function RuangUjian() {
           transition={{ type: 'spring', stiffness: 300, damping: 24 }}
           className="bg-white p-10 rounded-lg border border-exam-border shadow-2xl max-w-md w-full"
         >
-          {/* Icon */}
           <div className={cn(
             'w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg',
             isManual    && 'bg-green-50  text-exam-success shadow-green-100',
@@ -562,7 +594,6 @@ export default function RuangUjian() {
             {isViolation && <XCircle      size={48} />}
           </div>
 
-          {/* Judul */}
           <h2 className={cn(
             'text-2xl font-black uppercase italic tracking-tighter mb-3',
             isManual    && 'text-navy',
@@ -574,7 +605,6 @@ export default function RuangUjian() {
             {isViolation && 'Ujian Dihentikan!'}
           </h2>
 
-          {/* Banner alasan — hanya untuk auto-submit */}
           {!isManual && (
             <div className={cn(
               'px-4 py-3 rounded border mb-5 text-[10px] font-black uppercase tracking-widest leading-relaxed',
@@ -587,10 +617,9 @@ export default function RuangUjian() {
             </div>
           )}
 
-          {/* Skor */}
           <div className="mb-5">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Skor Sementara (Objektif):
+              Nilai Akhir:
             </p>
             <h3 className="text-6xl font-black italic tracking-tighter text-navy leading-none">
               {tempScore}
@@ -717,7 +746,7 @@ export default function RuangUjian() {
                     {currentSoal.teks_soal}
                   </div>
 
-                  {/* FIX 1: Gambar soal — polanya sama persis dengan SoalList guru */}
+                  {/* Gambar soal */}
                   {currentSoal.path_gambar && (
                     <div className="mb-5 rounded-xl overflow-hidden border border-slate-100 bg-slate-50">
                       <img
@@ -730,7 +759,7 @@ export default function RuangUjian() {
 
                   <div className="space-y-3">
 
-                    {/* FIX 2: Objektif — pakai shuffledPilihan (sudah diacak) */}
+                    {/* Objektif */}
                     {currentSoal.tipe_soal === 'objektif' && (
                       <div className="grid grid-cols-1 gap-2.5">
                         {shuffledPilihan.map((p, i) => (
@@ -763,7 +792,7 @@ export default function RuangUjian() {
                       </div>
                     )}
 
-                    {/* FIX 2: Ganda Kompleks — pakai shuffledPilihan (sudah diacak) */}
+                    {/* Ganda Kompleks */}
                     {currentSoal.tipe_soal === 'ganda_kompleks' && (
                       <div className="grid grid-cols-1 gap-2.5">
                         {shuffledPilihan.map(p => {

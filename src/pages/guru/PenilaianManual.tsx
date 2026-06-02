@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  FileCheck, 
-  User, 
-  Search, 
-  CheckCircle2, 
-  XCircle, 
-  Save, 
+import {
+  FileCheck,
+  User,
+  Search,
+  CheckCircle2,
   BookOpen,
   Check,
   X,
@@ -18,7 +16,7 @@ import { cn } from '../../lib/utils';
 import { useAuth } from '../../App';
 import api from '../../lib/axios';
 
-// ─── Types sesuai API response ────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────
 
 interface Soal {
   id: number;
@@ -32,8 +30,12 @@ interface Soal {
 interface JawabanPending {
   id: number;
   id_ujian: number;
+  /**
+   * ID dari record siswa_ujian — ini yang dipakai sebagai {siswaUjian}
+   * di endpoint PUT /ujian/{siswaUjian}/essay dan /isian
+   */
   id_siswa_ujian: number;
-  id_soal: number;
+  soal_id: number;
   jawaban_teks: string | null;
   nilai_manual_guru: number | null;
   soal?: Soal;
@@ -53,18 +55,18 @@ interface UjianManual {
 export default function PenilaianManual() {
   const { user } = useAuth();
 
-  // States
   const [ujians, setUjians] = useState<UjianManual[]>([]);
   const [selectedUjianId, setSelectedUjianId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [scores, setScores] = useState<Record<number, number>>({});
-  
+  // ✅ Fix: key adalah string "siswaUjianId-soalId", bukan number
+  const [scores, setScores] = useState<Record<string, number>>({});
+
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [pendingAnswers, setPendingAnswers] = useState<JawabanPending[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // ─── Fetch list ujian dengan soal pending ─────────────────────
+  // ─── Fetch list ujian ──────────────────────────────────────────
   const fetchUjians = async () => {
     try {
       setIsLoading(true);
@@ -73,7 +75,6 @@ export default function PenilaianManual() {
       const raw = res.data?.data;
       const allUjians = Array.isArray(raw) ? raw : raw?.data ?? [];
       setUjians(allUjians);
-      
       if (allUjians.length > 0 && !selectedUjianId) {
         setSelectedUjianId(allUjians[0].id);
       }
@@ -84,58 +85,159 @@ export default function PenilaianManual() {
     }
   };
 
-  // ─── Fetch jawaban pending untuk ujian terpilih ────────────────
-  // GET /ujian/{ujian}/manual
-  const fetchPendingAnswers = async (ujianId: number) => {
-    try {
-      setIsLoading(true);
-      setError(null);
-      const res = await api.get(`/ujian/${ujianId}/manual`);
-      const raw = res.data?.data;
-      
-      console.log('raw:', raw);                          // lihat bentuk aslinya
-      console.log('sample[0]:', raw?.[0] ?? raw?.data?.[0]); // lihat field yang ada
-      
-      const data = Array.isArray(raw) ? raw : raw?.data ?? [];
-      setPendingAnswers(data);
-    } catch (err: any) {
-      setError(err.response?.data?.message || 'Gagal mengambil jawaban pending');
+  // ─── Fetch pending answers ─────────────────────────────────────
+  //
+  // Alur yang benar:
+  //   Step 1 → GET /ujian/{ujianId}/list-manual
+  //             Response: { data: { ujian, total_siswa_belum_dinilai, siswa_ujians[] } }
+  //             → dapat daftar siswa_ujian yang masih punya jawaban belum dinilai
+  //
+  //   Step 2 → GET /ujian/{siswaUjian.id}/jawaban-siswa  (per siswa)
+  //             Response: { data: { siswa_ujian, jawaban[] } }
+  //             → dapat detail jawaban + relasi soal per siswa
+  //
+  // const fetchPendingAnswers = async (ujianId: number) => {
+  //   try {
+  //     setIsLoading(true);
+  //     setError(null);
+
+  //     // ── Step 1: ambil list siswa_ujian yang pending ─────────────
+  //     const manualRes = await api.get(`/ujian/${ujianId}/list-penilaian-manual`);
+  //     const manualData = manualRes.data?.data;
+  //     // siswa_ujians di response adalah array siswa_ujian objects
+  //     const siswaUjians: any[] = Array.isArray(manualData?.siswa_ujians)
+  //       ? manualData.siswa_ujians
+  //       : [];
+
+  //     if (siswaUjians.length === 0) {
+  //       setPendingAnswers([]);
+  //       return;
+  //     }
+
+  //     // ── Step 2: ambil jawaban per siswa secara paralel ──────────
+  //     const allAnswers: JawabanPending[] = [];
+
+  //     await Promise.all(
+  //       siswaUjians.map(async (su: any) => {
+  //         try {
+  //           // GET /ujian/{siswaUjian}/jawaban-siswa
+  //           console.log('[jawaban-siswa] su object:', JSON.stringify(su));
+  //   console.log('[jawaban-siswa] su.id:', su.id);
+  //   console.log('[jawaban-siswa] URL:', `/ujian/${su.id}/jawaban-siswa`);
+  //           const jawabanRes = await api.get(`/ujian/${su.id}/jawaban-siswa`);
+  //           const d = jawabanRes.data?.data;
+  //           const siswaUjianInfo = d?.siswa_ujian ?? su;
+  //           const jawabans: any[] = d?.jawaban ?? [];
+
+  //           jawabans.forEach((jaw: any) => {
+  //             const tipe = jaw.soal?.tipe_soal;
+
+  //             // hanya isian & essay yang belum dinilai (nilai_manual_guru null)
+  //             if (tipe !== 'isian' && tipe !== 'essay') return;
+  //             if (jaw.nilai_manual_guru !== null && jaw.nilai_manual_guru !== undefined) return;
+
+  //             allAnswers.push({
+  //               id:                jaw.id,
+  //               id_ujian:          ujianId,
+  //               // ✅ simpan siswa_ujian.id — ini yang dipakai di PUT endpoints
+  //               id_siswa_ujian:    su.id,
+  //               soal_id:           jaw.soal_id,
+  //               jawaban_teks:      jaw.jawaban_teks ?? null,
+  //               nilai_manual_guru: jaw.nilai_manual_guru ?? null,
+  //               soal:              jaw.soal ?? undefined,
+  //               siswa:             su.siswa ?? siswaUjianInfo.siswa ?? undefined,
+  //               waktu_selesai:     siswaUjianInfo.waktu_selesai ?? su.waktu_selesai,
+  //             });
+  //           });
+  //         } catch {
+  //           // skip individual fetch error, tetap lanjut siswa lain
+  //         }
+  //       })
+  //     );
+
+  //     setPendingAnswers(allAnswers);
+  //   } catch (err: any) {
+  //     setError(err.response?.data?.message || 'Gagal mengambil jawaban pending');
+  //     setPendingAnswers([]);
+  //   } finally {
+  //     setIsLoading(false);
+  //   }
+  // };
+const fetchPendingAnswers = async (ujianId: number) => {
+  try {
+    setIsLoading(true);
+    setError(null);
+
+    const manualRes = await api.get(`/ujian/${ujianId}/list-penilaian-manual`);
+    const manualData = manualRes.data?.data;
+    const siswaUjians: any[] = Array.isArray(manualData?.siswa_ujians)
+      ? manualData.siswa_ujians
+      : [];
+
+    if (siswaUjians.length === 0) {
       setPendingAnswers([]);
-    } finally {
-      setIsLoading(false);
+      return;
     }
-  };
+
+    // ✅ Langsung pakai data jawabans dari response, tidak perlu fetch lagi
+    const allAnswers: JawabanPending[] = [];
+
+    siswaUjians.forEach((su: any) => {
+      const jawabans: any[] = su.jawabans ?? [];
+
+      jawabans.forEach((jaw: any) => {
+        allAnswers.push({
+          id:             jaw.jawaban_id,
+          id_ujian:       ujianId,
+          id_siswa_ujian: su.siswa_ujian_id,  // ✅ fix field name
+          soal_id:        jaw.soal_id,
+          jawaban_teks:   jaw.jawaban_teks ?? null,
+          nilai_manual_guru: null,
+          soal: {
+            id:            jaw.soal_id,
+            id_ujian:      ujianId,
+            tipe_soal:     jaw.tipe_soal,
+            teks_soal:     jaw.teks_soal,
+            path_gambar:   null,
+            pilihan_jawaban: [],
+          },
+          siswa:        su.siswa ?? undefined,
+          waktu_selesai: su.waktu_selesai ?? undefined,
+        });
+      });
+    });
+
+    setPendingAnswers(allAnswers);
+  } catch (err: any) {
+    setError(err.response?.data?.message || 'Gagal mengambil jawaban pending');
+    setPendingAnswers([]);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   useEffect(() => {
     fetchUjians();
   }, []);
 
   useEffect(() => {
-    if (selectedUjianId) {
-      fetchPendingAnswers(selectedUjianId);
-    }
+    if (selectedUjianId) fetchPendingAnswers(selectedUjianId);
   }, [selectedUjianId]);
 
-  // ─── Submit Isian (is_true) ──────────────────────────────────
+  // ─── Grade Isian ───────────────────────────────────────────────
+  // PUT /ujian/{siswaUjian}/isian
+  // Body: { jawaban: [{ soal_id, is_true }] }
   const handleGradeIsan = async (
-    siswaUjianId: number,
+    siswaUjianId: number,   // ← id_siswa_ujian, bukan id_ujian!
     soalId: number,
     isTrue: boolean
   ) => {
     try {
       setIsSaving(true);
       await api.put(`/ujian/${siswaUjianId}/isian`, {
-        jawaban: [
-          {
-            soal_id: soalId,
-            is_true: isTrue,
-          },
-        ],
+        jawaban: [{ soal_id: soalId, is_true: isTrue }],
       });
-      // Refresh list setelah berhasil
-      if (selectedUjianId) {
-        await fetchPendingAnswers(selectedUjianId);
-      }
+      if (selectedUjianId) await fetchPendingAnswers(selectedUjianId);
     } catch (err: any) {
       alert(err.response?.data?.message || 'Gagal menyimpan nilai isian');
     } finally {
@@ -143,26 +245,21 @@ export default function PenilaianManual() {
     }
   };
 
-  // ─── Submit Essay (nilai_manual_guru) ────────────────────────
+  // ─── Grade Essay ───────────────────────────────────────────────
+  // PUT /ujian/{siswaUjian}/essay
+  // Body: { jawaban: [{ soal_id, nilai_manual_guru }] }
   const handleGradeEssay = async (
-    siswaUjianId: number,
+    siswaUjianId: number,   // ← id_siswa_ujian, bukan id_ujian!
     soalId: number,
     nilai: number
   ) => {
     try {
       setIsSaving(true);
       await api.put(`/ujian/${siswaUjianId}/essay`, {
-        jawaban: [
-          {
-            soal_id: soalId,
-            nilai_manual_guru: nilai,
-          },
-        ],
+        jawaban: [{ soal_id: soalId, nilai_manual_guru: nilai }],
       });
-      // Refresh list & clear score input
-      if (selectedUjianId) {
-        await fetchPendingAnswers(selectedUjianId);
-      }
+      if (selectedUjianId) await fetchPendingAnswers(selectedUjianId);
+      // hapus score input setelah berhasil
       setScores(prev => {
         const next = { ...prev };
         delete next[`${siswaUjianId}-${soalId}`];
@@ -175,24 +272,27 @@ export default function PenilaianManual() {
     }
   };
 
-  // ─── Filter & Group ──────────────────────────────────────────
+  // ─── Filter & Group by soal ────────────────────────────────────
   const filtered = pendingAnswers.filter(ans => {
     if (!searchQuery) return true;
-    const siswaName = ans.siswa?.nama || '';
-    const soalText = ans.soal?.teks_soal || '';
+    const name = ans.siswa?.nama ?? '';
+    const teks = ans.soal?.teks_soal ?? '';
     return (
-      siswaName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      soalText.toLowerCase().includes(searchQuery.toLowerCase())
+      name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      teks.toLowerCase().includes(searchQuery.toLowerCase())
     );
   });
 
-  const groupedByQuestion = filtered.reduce((acc, ans) => {
-    const key = ans.id_soal;
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(ans);
-    return acc;
-  }, {} as Record<number, JawabanPending[]>);
+  const groupedByQuestion = filtered.reduce<Record<number, JawabanPending[]>>(
+    (acc, ans) => {
+      if (!acc[ans.soal_id]) acc[ans.soal_id] = [];
+      acc[ans.soal_id].push(ans);
+      return acc;
+    },
+    {}
+  );
 
+  // ─── Render ────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
       {/* Header & Filter */}
@@ -211,7 +311,9 @@ export default function PenilaianManual() {
             <select
               className="px-4 py-2 bg-slate-50 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest outline-none focus:border-light-blue transition"
               value={selectedUjianId || ''}
-              onChange={(e) => setSelectedUjianId(e.target.value ? Number(e.target.value) : null)}
+              onChange={e =>
+                setSelectedUjianId(e.target.value ? Number(e.target.value) : null)
+              }
               disabled={isLoading}
             >
               <option value="">Pilih Ujian...</option>
@@ -221,15 +323,20 @@ export default function PenilaianManual() {
                 </option>
               ))}
             </select>
+
             <div className="relative">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Search
+                size={14}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
+              />
               <input
                 placeholder="CARI SISWA..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={e => setSearchQuery(e.target.value)}
                 className="pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded text-[10px] font-black uppercase tracking-widest outline-none focus:border-light-blue transition w-full"
               />
             </div>
+
             <button
               onClick={() => selectedUjianId && fetchPendingAnswers(selectedUjianId)}
               disabled={isLoading || !selectedUjianId}
@@ -309,7 +416,7 @@ export default function PenilaianManual() {
                     )}
                   </div>
 
-                  {/* Answers Grid/List */}
+                  {/* Answers */}
                   <div
                     className={cn(
                       isIsan
@@ -317,9 +424,11 @@ export default function PenilaianManual() {
                         : 'divide-y divide-slate-100'
                     )}
                   >
-                    {answers.map((ans) => {
-                      const scoreKey = `${ans.id_ujian}-${ans.id_soal}`;
+                    {answers.map(ans => {
+                      // ✅ Fix: key pakai id_siswa_ujian bukan id_ujian
+                      const scoreKey = `${ans.id_siswa_ujian}-${ans.soal_id}`;
 
+                      // ── Isian Card ──────────────────────────────
                       if (isIsan) {
                         return (
                           <div
@@ -352,9 +461,10 @@ export default function PenilaianManual() {
                             </div>
 
                             <div className="flex items-center gap-1.5 pt-1">
+                              {/* ✅ Fix: pakai ans.id_siswa_ujian */}
                               <button
                                 onClick={() =>
-                                  handleGradeIsan(ans.id_ujian, ans.id_soal, false)
+                                  handleGradeIsan(ans.id_siswa_ujian, ans.soal_id, false)
                                 }
                                 disabled={isSaving}
                                 className="flex-1 py-1.5 flex items-center justify-center bg-red-50 text-red-500 rounded border border-red-100 hover:bg-red-500 hover:text-white transition-all active:scale-95 disabled:opacity-50"
@@ -363,7 +473,7 @@ export default function PenilaianManual() {
                               </button>
                               <button
                                 onClick={() =>
-                                  handleGradeIsan(ans.id_ujian, ans.id_soal, true)
+                                  handleGradeIsan(ans.id_siswa_ujian, ans.soal_id, true)
                                 }
                                 disabled={isSaving}
                                 className="flex-1 py-1.5 flex items-center justify-center bg-green-50 text-green-500 rounded border border-green-100 hover:bg-green-500 hover:text-white transition-all active:scale-95 disabled:opacity-50"
@@ -375,6 +485,7 @@ export default function PenilaianManual() {
                         );
                       }
 
+                      // ── Essay Row ───────────────────────────────
                       return (
                         <div
                           key={ans.id}
@@ -412,25 +523,29 @@ export default function PenilaianManual() {
                             <div className="flex items-center gap-1.5 w-full max-w-[140px]">
                               <input
                                 type="number"
+                                min={0}
+                                max={100}
                                 placeholder="SKOR..."
                                 value={scores[scoreKey] ?? ''}
-                                onChange={(e) =>
-                                  setScores({
-                                    ...scores,
+                                onChange={e =>
+                                  setScores(prev => ({
+                                    ...prev,
                                     [scoreKey]: Number(e.target.value),
-                                  })
+                                  }))
                                 }
                                 className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded text-xs font-black outline-none focus:border-light-blue"
                               />
+                              {/* ✅ Fix: pakai ans.id_siswa_ujian */}
                               <button
-                                onClick={() =>
-                                  scores[scoreKey] !== undefined &&
-                                  handleGradeEssay(
-                                    ans.id_ujian,
-                                    ans.id_soal,
-                                    scores[scoreKey]
-                                  )
-                                }
+                                onClick={() => {
+                                  if (scores[scoreKey] !== undefined) {
+                                    handleGradeEssay(
+                                      ans.id_siswa_ujian,
+                                      ans.soal_id,
+                                      scores[scoreKey]
+                                    );
+                                  }
+                                }}
                                 disabled={scores[scoreKey] === undefined || isSaving}
                                 className="p-2.5 bg-navy text-white rounded transition-all disabled:opacity-30 active:scale-95 shadow-lg shadow-navy/10"
                               >
