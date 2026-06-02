@@ -99,7 +99,7 @@ export interface UjianSiswa {
 export interface JawabanSiswa {
   id: number;
   id_ujian_siswa: number;
-  id_soal: number;
+  soal_id: number;
   jawaban_teks?: string;
   id_pilihan_terpilih?: number[];
   pasangan_terpilih?: Record<string, string>;

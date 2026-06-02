@@ -337,7 +337,7 @@ export default function RuangUjian() {
   // Auto-save jawaban
   // ─────────────────────────────────────────────
   const saveJawaban = useCallback(async (soalId: number, val: any) => {
-    console.log(soalId);
+    console.log(soalId, val);
     if (isFinishedRef.current) return;
     try {
       await api.post(`/ujian/${siswaUjianId}/jawaban`, { soal_id: soalId, jawaban: val });
