@@ -337,6 +337,7 @@ export default function RuangUjian() {
   // Auto-save jawaban
   // ─────────────────────────────────────────────
   const saveJawaban = useCallback(async (soalId: number, val: any) => {
+    console.log(soalId);
     if (isFinishedRef.current) return;
     try {
       await api.post(`/ujian/${siswaUjianId}/jawaban`, { id_soal: soalId, jawaban: val });
@@ -380,6 +381,7 @@ export default function RuangUjian() {
     } catch (err: any) {
       const status  = err.response?.status;
       const message: string = err.response?.data?.message ?? '';
+  console.log(err.response?.data);
 
       // FIX 3b: 422 = server sudah tandai ujian selesai (bisa dari trigger sebelumnya)
       // Tetap tampilkan halaman selesai supaya siswa bisa kembali ke dashboard
@@ -407,9 +409,9 @@ export default function RuangUjian() {
   // ─────────────────────────────────────────────
   useEffect(() => {
     if (isInitializing || timeLeft <= 0) {
-      if (!isInitializing && timeLeft <= 0 && !isFinishedRef.current) {
-        handleFinishRef.current('timeout');
-      }
+      // if (!isInitializing && timeLeft <= 0 && !isFinishedRef.current) {
+      //   handleFinishRef.current('timeout');
+      // }
       return;
     }
     const iv = setInterval(() => setTimeLeft(p => p - 1), 1000);

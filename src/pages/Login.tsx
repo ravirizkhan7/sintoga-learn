@@ -88,15 +88,6 @@ export default function Login() {
             </button>
           </form>
 
-          {/* <div className="mt-12 pt-8 border-t border-slate-100">
-             <div className="bg-slate-50 p-4 rounded border border-slate-100">
-               <p className="text-[9px] text-center text-slate-400 font-bold uppercase tracking-wider leading-relaxed">
-                 Admin: admin@gmail.com / admin1234<br/>
-                 Guru: guru@gmail.com / guru1234<br/>
-                 Siswa: siswa@gmail.com / siswa1234
-               </p>
-             </div>
-          </div> */}
         </div>
       </motion.div>
     </div>
