@@ -340,7 +340,7 @@ export default function RuangUjian() {
     console.log(soalId);
     if (isFinishedRef.current) return;
     try {
-      await api.post(`/ujian/${siswaUjianId}/jawaban`, { id_soal: soalId, jawaban: val });
+      await api.post(`/ujian/${siswaUjianId}/jawaban`, { soal_id: soalId, jawaban: val });
     } catch (err: any) {
       console.warn('Auto-save gagal:', err.response?.data?.message ?? err.message);
     }
@@ -367,7 +367,7 @@ export default function RuangUjian() {
 
     try {
       const payload = Object.entries(jawaban).map(([soalId, val]) => ({
-        id_soal: Number(soalId),
+        soal_id: Number(soalId),
         jawaban: val,
       }));
 
