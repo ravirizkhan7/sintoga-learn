@@ -11,7 +11,10 @@ import {
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../../lib/utils';
-import api from '../../lib/axios';
+import api, { APP_URL } from '../../lib/axios';
+
+// ─── Storage URL (sama seperti di guru/useBankSoal) ───────────
+const BASE_STORAGE_URL = `${APP_URL}/storage/`;
 
 type TipeUjian = 'Semua' | 'STS' | 'UTS' | 'UAS' | 'Harian';
 
@@ -28,14 +31,12 @@ interface RiwayatItem {
   urutan_soal?: any[];
   created_at?: string;
   updated_at?: string;
-  // ✅ Tambah field ujian (nested object dari relasi)
   ujian?: {
     id: number;
     judul_ujian: string;
     tipe_ujian?: string;
     mata_pelajaran?: string;
   };
-  // ✅ Atau flat field kalau backend return langsung
   judul_ujian?: string;
 }
 
@@ -55,7 +56,8 @@ interface JawabanItem {
     id: number;
     teks_soal: string;
     tipe_soal: string;
-    jalur_gambar: string | null;
+    jalur_gambar: string | null;  // endpoint 1
+    path_gambar?: string | null;  // endpoint 2 fallback
     pilihan_jawaban: PilihanJawaban[];
   };
   jawaban_siswa: {
@@ -75,12 +77,11 @@ interface DetailHasil {
 }
 
 // ─── Helper: ambil judul ujian dari item ─────────────────────
-// Fleksibel — handle nested object atau flat field
 const getJudulUjian = (item: RiwayatItem): string => {
   return (
     item.ujian?.judul_ujian ||
     item.judul_ujian ||
-    `Ujian #${item.ujian_id}`  // fallback terakhir
+    `Ujian #${item.ujian_id}`
   );
 };
 
@@ -132,15 +133,28 @@ export default function HistoriSiswa() {
       setIsLoadingDetail(true);
       setSelectedItem(item);
 
-      const res = await api.get(`/ujian/${item.id}/hasil`);
+      // ✅ endpoint yang benar adalah /siswa-ujian/{id}/hasil
+      const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
       console.log('response detail:', res.data);
-      
+
       const raw = res.data?.data;
+      // 🔍 Debug: log semua key yang ada di response
+      console.log('raw keys:', raw ? Object.keys(raw) : 'null');
+      console.log('raw.jawabans:', raw?.jawabans);
+      console.log('raw.jawaban:', raw?.jawaban);
+      console.log('raw.nilai_akhir:', raw?.nilai_akhir);
+
       setDetail({
-        siswa: raw.siswa || '',
-        nilai_akhir: raw.nilai_akhir || '0',
-        breakdown: raw.breakdown ?? [],
-        jawabans: raw.jawabans ?? [],
+        siswa: raw?.siswa || '',
+        // ✅ FIX: fallback ke siswa_ujian.nilai_akhir atau nilai dari list card
+        nilai_akhir:
+          raw?.nilai_akhir ||
+          raw?.siswa_ujian?.nilai_akhir ||
+          item.nilai_akhir ||
+          '0',
+        breakdown: raw?.breakdown ?? [],
+        // ✅ FIX: handle "jawabans" (endpoint 1) DAN "jawaban" (endpoint 2)
+        jawabans: raw?.jawabans ?? raw?.jawaban ?? [],
       });
 
       setSelectedSiswaUjianId(item.id);
@@ -178,7 +192,6 @@ export default function HistoriSiswa() {
               <History size={14} className="text-light-blue" />
               <span className="text-[9px] font-black uppercase tracking-widest">Detail Hasil Ujian</span>
             </div>
-            {/* ✅ Tampilkan judul ujian di header detail */}
             <h1 className="text-3xl font-black italic tracking-tighter mb-1 uppercase">
               {getJudulUjian(selectedItem)}
             </h1>
@@ -208,7 +221,15 @@ export default function HistoriSiswa() {
             {detail.jawabans.map((item, idx) => {
               const { soal, jawaban_siswa, nilai } = item;
               const isCorrect = nilai > 0;
-              const gambarUrl = soal.jalur_gambar || null;
+              // ✅ Ambil raw path (jalur_gambar endpoint 1, path_gambar endpoint 2)
+              const rawGambar = soal.jalur_gambar || soal.path_gambar || null;
+              // ✅ Kalau path relatif → prefix BASE_STORAGE_URL (sama seperti SoalList guru)
+              //    Kalau sudah full URL (http/https) → pakai langsung
+              const gambarUrl = rawGambar
+                ? rawGambar.startsWith('http')
+                  ? rawGambar
+                  : `${BASE_STORAGE_URL}${rawGambar}`
+                : null;
 
               return (
                 <div 
@@ -292,19 +313,83 @@ export default function HistoriSiswa() {
 
                       {soal.tipe_soal === 'menjodohkan' && (
                         <div className="space-y-2">
+                          {/* Header kolom */}
+                          <div className="grid grid-cols-[1fr_16px_1fr_16px_1fr] gap-2 px-3 pb-1">
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Item</span>
+                            <span />
+                            <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Jawaban Kamu</span>
+                            <span />
+                            <span className="text-[9px] font-black text-green-500 uppercase tracking-widest">Kunci Jawaban</span>
+                          </div>
+
                           {soal.pilihan_jawaban.map(p => {
+                            // ✅ Cari jawaban siswa untuk item ini
+                            // Handle berbagai kemungkinan struktur pasangan_terpilih dari API
                             const pasanganTerpilih = jawaban_siswa?.pasangan_terpilih?.find(
-                              (pt: any) => pt?.item_id === p.id
+                              (pt: any) =>
+                                pt?.item_id === p.id ||
+                                pt?.pilihan_id === p.id ||
+                                pt?.id === p.id ||
+                                pt?.soal_id === p.id
                             );
+
+                            // ✅ Ambil teks jawaban siswa — coba berbagai field name
+                            const teksJawaban =
+                              pasanganTerpilih?.pasangan ||
+                              pasanganTerpilih?.teks_pasangan ||
+                              pasanganTerpilih?.jawaban ||
+                              pasanganTerpilih?.teks ||
+                              // Kalau store pasangan_id, cari teks_pasangan dari pilihan yang sesuai
+                              (pasanganTerpilih?.pasangan_id != null
+                                ? soal.pilihan_jawaban.find(
+                                    x => x.id === pasanganTerpilih.pasangan_id
+                                  )?.teks_pasangan ?? null
+                                : null) ||
+                              null;
+
+                            // ✅ Bandingkan jawaban siswa dengan kunci
+                            const isMatch =
+                              teksJawaban != null &&
+                              teksJawaban.trim().toLowerCase() ===
+                                p.teks_pasangan.trim().toLowerCase();
+
                             return (
-                              <div 
-                                key={p.id} 
-                                className="flex items-center gap-3 p-3 bg-slate-50 rounded border border-slate-100 text-[11px] font-bold text-navy"
+                              <div
+                                key={p.id}
+                                className={cn(
+                                  'grid grid-cols-[1fr_16px_1fr_16px_1fr] items-center gap-2 p-3 rounded border text-[11px] font-bold transition-all',
+                                  isMatch
+                                    ? 'bg-green-50 border-green-200'
+                                    : teksJawaban
+                                      ? 'bg-red-50 border-red-200'
+                                      : 'bg-slate-50 border-slate-100'
+                                )}
                               >
-                                <span className="flex-1">{p.teks_pilihan}</span>
-                                <span className="text-slate-300">→</span>
-                                <span className="flex-1 text-light-blue">
-                                  {pasanganTerpilih?.pasangan || '-'}
+                                {/* Item kiri */}
+                                <span className="text-navy leading-snug">{p.teks_pilihan}</span>
+
+                                {/* Panah */}
+                                <span className="text-slate-300 text-center">→</span>
+
+                                {/* Jawaban siswa */}
+                                <span className={cn(
+                                  'leading-snug',
+                                  isMatch
+                                    ? 'text-green-600'
+                                    : teksJawaban
+                                      ? 'text-red-500'
+                                      : 'text-slate-300 italic'
+                                )}>
+                                  {teksJawaban ?? 'Tidak dijawab'}
+                                </span>
+
+                                {/* Pembatas */}
+                                <span className="text-slate-200 text-center">|</span>
+
+                                {/* Kunci jawaban */}
+                                <span className="flex items-center gap-1 text-green-600 leading-snug">
+                                  <CheckCircle2 size={10} className="shrink-0 mt-0.5" />
+                                  <span>{p.teks_pasangan}</span>
                                 </span>
                               </div>
                             );
@@ -396,7 +481,6 @@ export default function HistoriSiswa() {
             >
               <div className="p-6 bg-slate-50/50 border-b border-slate-100 flex justify-between items-start">
                 <div className="flex flex-col gap-1 min-w-0 flex-1">
-                  {/* ✅ Badge tipe ujian kalau ada, fallback ke ujian_id */}
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="px-2 py-0.5 bg-navy text-white text-[8px] font-black uppercase tracking-widest rounded w-fit">
                       {getTipeUjian(item) || `Ujian #${item.ujian_id}`}
@@ -407,11 +491,9 @@ export default function HistoriSiswa() {
                       </span>
                     )}
                   </div>
-                  {/* ✅ Judul ujian — bukan status lagi */}
                   <h3 className="text-sm font-black text-navy uppercase tracking-tighter leading-tight group-hover:text-light-blue transition-colors mt-2 line-clamp-2">
                     {getJudulUjian(item)}
                   </h3>
-                  {/* ✅ Mata pelajaran sebagai subtitle kalau ada */}
                   {item.ujian?.mata_pelajaran && (
                     <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">
                       {item.ujian.mata_pelajaran}
