@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 // 1. Tampung URL API (dari .env atau fallback)
-export const API_URL = import.meta.env.VITE_API_URL || 'https://remove-installing-represent-vancouver.trycloudflare.com/api';
+export const API_URL = import.meta.env.VITE_API_URL || 'https://chambers-rugby-billing-hundreds.trycloudflare.com/api';
 
 // 2. Bikin APP_URL dengan membuang kata '/api' di belakangnya untuk keperluan path storage
 export const APP_URL = API_URL.replace(/\/api\/?$/, '');
