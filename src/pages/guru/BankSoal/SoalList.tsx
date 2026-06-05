@@ -1,5 +1,5 @@
 import React from 'react';
-import { Plus, Search, Filter, Layers, HelpCircle, BookOpen, Trash2, CheckCircle2, RefreshCcw, Pencil, ImageIcon } from 'lucide-react';
+import { Plus, Search, Filter, Layers, HelpCircle, BookOpen, Trash2, CheckCircle2, RefreshCcw, Pencil, ImageIcon, GitMerge } from 'lucide-react';
 import { motion } from 'motion/react';
 import { cn } from '../../../lib/utils';
 import { BankSoal, BobotForm } from '../../../types';
@@ -30,6 +30,10 @@ const getTipeColor = (type: string) => {
   }
 };
 
+// Potong teks ke maxLen karakter, tambah "..." kalau lebih
+const truncate = (str: string, maxLen = 5): string =>
+  str && str.length > maxLen ? str.slice(0, maxLen) + '...' : (str ?? '');
+
 export default function SoalList({
   soalList, isLoadingSoal, deletingId,
   searchTerm, filterType, bobotForm,
@@ -52,6 +56,21 @@ export default function SoalList({
     const matchType = filterType === 'all' || s.tipe_soal === filterType;
     return matchSearch && matchType;
   });
+
+  // Render label pasangan untuk soal menjodohkan
+  // Format: "itemA...-pasanganA..., itemB...-pasanganB..."
+  const renderPasanganLabel = (soal: BankSoal): string => {
+    if (!soal.pilihan_jawaban?.length) return '-';
+    return soal.pilihan_jawaban
+      .map(p => `${truncate(p.teks_pilihan)}-${truncate(p.teks_pasangan)}`)
+      .join(', ');
+  };
+
+  // Render label jawaban benar untuk tipe non-menjodohkan
+  const renderJawabanBenarLabel = (soal: BankSoal): string => {
+    const benar = soal.pilihan_jawaban?.filter(p => p.is_true) ?? [];
+    return benar.map(p => truncate(p.teks_pilihan, 8)).join(', ');
+  };
 
   return (
     <>
@@ -102,7 +121,7 @@ export default function SoalList({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4">
-          {filtered.map((soal, index) => (  // ← tambah index
+          {filtered.map((soal, index) => (
             <motion.div
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -112,7 +131,6 @@ export default function SoalList({
               {/* ── Card Header ── */}
               <div className="flex items-center justify-between mb-3 gap-2">
                 <div className="flex items-center gap-2 flex-wrap min-w-0">
-                  {/* Tipe badge */}
                   <span className={cn(
                     'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-widest shrink-0',
                     getTipeColor(soal.tipe_soal),
@@ -120,7 +138,6 @@ export default function SoalList({
                     {soal.tipe_soal.replace('_', ' ')}
                   </span>
 
-                  {/* Icon gambar — hanya muncul kalau ada gambar */}
                   {soal.path_gambar && (
                     <span
                       className="flex items-center gap-1 px-2 py-1 bg-amber-50 text-amber-500 rounded-full text-[10px] font-black uppercase tracking-widest shrink-0"
@@ -131,13 +148,11 @@ export default function SoalList({
                     </span>
                   )}
 
-                  {/* Nomor urut — bukan soal.id tapi index + 1 */}
                   <span className="text-slate-300 font-mono text-xs font-bold shrink-0">
                     #{index + 1}
                   </span>
                 </div>
 
-                {/* Action buttons */}
                 <div className="flex items-center gap-1.5 shrink-0">
                   <button
                     onClick={() => onEdit(soal)}
@@ -168,10 +183,10 @@ export default function SoalList({
               <div className="flex gap-3">
                 {soal.path_gambar && (
                   <div className="w-16 h-16 sm:w-24 sm:h-24 rounded-xl bg-slate-100 overflow-hidden shrink-0 border border-slate-200">
-                    <img 
+                    <img
                       src={`${BASE_STORAGE_URL}${soal.path_gambar}`}
-                      alt="Soal" 
-                      className="w-full h-full object-cover" 
+                      alt="Soal"
+                      className="w-full h-full object-cover"
                     />
                   </div>
                 )}
@@ -179,6 +194,7 @@ export default function SoalList({
                   <p className="text-sm sm:text-base font-bold text-navy mb-3 leading-relaxed line-clamp-2">
                     {soal.teks_soal}
                   </p>
+
                   <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                     {(soal.pilihan_jawaban?.length ?? 0) > 0 && (
                       <div className="flex items-center gap-1 text-[11px] text-slate-500 font-bold uppercase tracking-tight">
@@ -186,17 +202,33 @@ export default function SoalList({
                         {soal.pilihan_jawaban!.length} Pilihan
                       </div>
                     )}
+
                     <div className="flex items-center gap-1 text-[11px] text-slate-400 font-bold uppercase tracking-tight">
                       <HelpCircle size={12} className="text-slate-300 shrink-0" />
                       {getBobotForTipe(soal.tipe_soal)} poin
                     </div>
-                    {soal.pilihan_jawaban?.some(p => p.is_true) && (
-                      <div className="flex items-center gap-1 text-[11px] text-green-600 font-bold min-w-0">
-                        <CheckCircle2 size={12} className="shrink-0" />
-                        <span className="truncate max-w-[120px] sm:max-w-xs">
-                          {soal.pilihan_jawaban!.filter(p => p.is_true).map(p => p.teks_pilihan).join(', ')}
-                        </span>
-                      </div>
+
+                    {/* ── Pasangan / Jawaban Benar ── */}
+                    {soal.tipe_soal === 'menjodohkan' ? (
+                      // Menjodohkan: tampil "itemA...-pasanganA..., ..."
+                      (soal.pilihan_jawaban?.length ?? 0) > 0 && (
+                        <div className="flex items-center gap-1 text-[11px] text-orange-500 font-bold min-w-0">
+                          <GitMerge size={12} className="shrink-0" />
+                          <span className="truncate max-w-[160px] sm:max-w-xs font-mono">
+                            {renderPasanganLabel(soal)}
+                          </span>
+                        </div>
+                      )
+                    ) : (
+                      // Non-menjodohkan: tampil jawaban benar seperti semula
+                      soal.pilihan_jawaban?.some(p => p.is_true) && (
+                        <div className="flex items-center gap-1 text-[11px] text-green-600 font-bold min-w-0">
+                          <CheckCircle2 size={12} className="shrink-0" />
+                          <span className="truncate max-w-[120px] sm:max-w-xs">
+                            {renderJawabanBenarLabel(soal)}
+                          </span>
+                        </div>
+                      )
                     )}
                   </div>
                 </div>

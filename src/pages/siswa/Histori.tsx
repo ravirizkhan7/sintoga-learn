@@ -13,10 +13,8 @@ import { motion } from 'motion/react';
 import { cn } from '../../lib/utils';
 import api, { APP_URL } from '../../lib/axios';
 
-// ─── Storage URL (sama seperti di guru/useBankSoal) ───────────
+// ─── Storage URL ───────────────────────────────────────────────
 const BASE_STORAGE_URL = `${APP_URL}/storage/`;
-
-type TipeUjian = 'Semua' | 'STS' | 'UTS' | 'UAS' | 'Harian';
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -66,7 +64,8 @@ interface JawabanItem {
     pasangan_terpilih: any[] | null;
     nilai_manual_guru: number | null;
   };
-  nilai: number;
+  nilai: number | null;
+  sudah_dinilai?: boolean;
 }
 
 interface DetailHasil {
@@ -76,16 +75,103 @@ interface DetailHasil {
   jawabans: JawabanItem[];
 }
 
-// ─── Helpers ─────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────
 const getJudulUjian = (item: RiwayatItem): string =>
   item.ujian?.judul_ujian || item.judul_ujian || `Ujian #${item.ujian_id}`;
 
 const getTipeUjian = (item: RiwayatItem): string | null =>
   item.ujian?.tipe_ujian || null;
 
+// ─────────────────────────────────────────────────────────────
+// Hitung skor per soal di frontend
+// Backend kirim nilai: null untuk objektif/ganda/menjodohkan,
+// jadi kita hitung sendiri dari data pilihan_jawaban yang sudah ada.
+// ─────────────────────────────────────────────────────────────
+function hitungSkor(item: JawabanItem): number {
+  const { soal, jawaban_siswa, nilai } = item;
+
+  // Kalau backend sudah kasih nilai (non-null), pakai langsung
+  if (nilai !== null && nilai !== undefined) return nilai;
+
+  const tipe = soal.tipe_soal;
+  const pilihan = soal.pilihan_jawaban ?? [];
+
+  // ── Isian / Essay: nilai dari guru ──────────────────────────
+  if (tipe === 'isian' || tipe === 'essay') {
+    return jawaban_siswa?.nilai_manual_guru ?? 0;
+  }
+
+  // ── Objektif: 1 pilihan, ambil persentase_nilai jika benar ──
+  if (tipe === 'objektif') {
+    const selectedId = jawaban_siswa?.id_pilihan_terpilih?.[0];
+    if (selectedId == null) return 0;
+    const pilihanDipilih = pilihan.find(p => p.id === selectedId);
+    if (!pilihanDipilih) return 0;
+    // Benar jika is_true === 1, ambil persentase_nilai-nya
+    return pilihanDipilih.is_true === 1 ? (pilihanDipilih.persentase_nilai ?? 100) : 0;
+  }
+
+  // ── Ganda Kompleks: bisa pilih banyak, jumlah persentase yg benar ──
+  if (tipe === 'ganda_kompleks') {
+    const selectedIds = jawaban_siswa?.id_pilihan_terpilih ?? [];
+    if (selectedIds.length === 0) return 0;
+    // Jumlahkan persentase_nilai dari pilihan yang dipilih DAN benar
+    const total = selectedIds.reduce((acc, id) => {
+      const p = pilihan.find(x => x.id === id);
+      if (!p) return acc;
+      return acc + (p.is_true === 1 ? (p.persentase_nilai ?? 0) : 0);
+    }, 0);
+    return total;
+  }
+
+  // ── Menjodohkan: hitung pasangan benar / total pasangan ──────
+  if (tipe === 'menjodohkan') {
+    const pasanganTerpilih = jawaban_siswa?.pasangan_terpilih ?? [];
+    if (pasanganTerpilih.length === 0) return 0;
+
+    const totalPasangan = pilihan.length;
+    if (totalPasangan === 0) return 0;
+
+    // Hitung berapa pasangan yang cocok
+    let benar = 0;
+    pilihan.forEach(p => {
+      const match = pasanganTerpilih.find(
+        (pt: any) =>
+          pt?.item_id === p.id ||
+          pt?.pilihan_id === p.id ||
+          pt?.id === p.id ||
+          pt?.soal_id === p.id
+      );
+      if (!match) return;
+
+      // Cek apakah teks pasangan yang dipilih cocok dengan kunci
+      const teksJawaban =
+        match?.pasangan ||
+        match?.teks_pasangan ||
+        match?.jawaban ||
+        match?.teks ||
+        (match?.pasangan_id != null
+          ? pilihan.find(x => x.id === match.pasangan_id)?.teks_pasangan ?? null
+          : null) ||
+        null;
+
+      if (
+        teksJawaban != null &&
+        teksJawaban.trim().toLowerCase() === p.teks_pasangan.trim().toLowerCase()
+      ) {
+        benar++;
+      }
+    });
+
+    // Skor = (pasangan benar / total pasangan) * 100
+    return Math.round((benar / totalPasangan) * 100);
+  }
+
+  return 0;
+}
+
 // ─── Sub-components ───────────────────────────────────────────
 
-/** Label bagian: "Jawaban Kamu" / "Kunci Jawaban" / "Nilai Guru" */
 function SectionLabel({
   icon,
   label,
@@ -93,17 +179,19 @@ function SectionLabel({
 }: {
   icon: React.ReactNode;
   label: string;
-  variant: 'neutral' | 'green' | 'blue';
+  variant: 'neutral' | 'green' | 'blue' | 'orange';
 }) {
   const colorBar = {
     neutral: 'bg-slate-300',
-    green: 'bg-green-400',
-    blue: 'bg-light-blue',
+    green:   'bg-green-400',
+    blue:    'bg-light-blue',
+    orange:  'bg-amber-400',
   }[variant];
   const colorText = {
     neutral: 'text-slate-400',
-    green: 'text-green-500',
-    blue: 'text-light-blue',
+    green:   'text-green-500',
+    blue:    'text-light-blue',
+    orange:  'text-amber-500',
   }[variant];
 
   return (
@@ -117,8 +205,24 @@ function SectionLabel({
   );
 }
 
-/** Satu baris pilihan (objektif/ganda) */
-function AnswerRow({ text, isCorrect, showIcon = true }: { text: string; isCorrect: boolean; showIcon?: boolean }) {
+function SkorBadge({ nilai, isCorrect }: { nilai: number; isCorrect: boolean }) {
+  return (
+    <div className={cn(
+      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-widest',
+      isCorrect
+        ? 'bg-green-50 border-green-200 text-green-700'
+        : 'bg-red-50 border-red-200 text-red-600',
+    )}>
+      {isCorrect
+        ? <CheckCircle2 size={11} className="shrink-0" />
+        : <XCircle size={11} className="shrink-0" />
+      }
+      Nilai: {nilai}
+    </div>
+  );
+}
+
+function AnswerRow({ text, isCorrect }: { text: string; isCorrect: boolean }) {
   return (
     <div className={cn(
       'flex items-center gap-2.5 p-3 rounded-lg border text-[11px] font-bold',
@@ -126,17 +230,15 @@ function AnswerRow({ text, isCorrect, showIcon = true }: { text: string; isCorre
         ? 'bg-green-50 border-green-200 text-green-700'
         : 'bg-red-50 border-red-200 text-red-600',
     )}>
-      {showIcon && (
-        isCorrect
-          ? <CheckCircle2 size={13} className="shrink-0" />
-          : <XCircle size={13} className="shrink-0" />
-      )}
+      {isCorrect
+        ? <CheckCircle2 size={13} className="shrink-0" />
+        : <XCircle size={13} className="shrink-0" />
+      }
       <span className="flex-1">{text}</span>
     </div>
   );
 }
 
-/** Satu baris kunci (selalu hijau) */
 function KunciRow({ text }: { text: string }) {
   return (
     <div className="flex items-center gap-2.5 p-3 bg-green-50 border border-green-200 rounded-lg text-[11px] font-bold text-green-700">
@@ -146,7 +248,6 @@ function KunciRow({ text }: { text: string }) {
   );
 }
 
-/** Baris kosong / tidak menjawab */
 function EmptyRow({ label = 'Tidak menjawab' }: { label?: string }) {
   return (
     <div className="p-3 bg-slate-50 border border-dashed border-slate-200 rounded-lg text-[11px] text-slate-300 italic">
@@ -159,11 +260,11 @@ function EmptyRow({ label = 'Tidak menjawab' }: { label?: string }) {
 export default function HistoriSiswa() {
   const [selectedSiswaUjianId, setSelectedSiswaUjianId] = useState<number | null>(null);
 
-  const [riwayat, setRiwayat] = useState<RiwayatItem[]>([]);
+  const [riwayat, setRiwayat]       = useState<RiwayatItem[]>([]);
   const [isLoadingList, setIsLoadingList] = useState(true);
-  const [listError, setListError] = useState<string | null>(null);
+  const [listError, setListError]   = useState<string | null>(null);
 
-  const [detail, setDetail] = useState<DetailHasil | null>(null);
+  const [detail, setDetail]         = useState<DetailHasil | null>(null);
   const [selectedItem, setSelectedItem] = useState<RiwayatItem | null>(null);
   const [isLoadingDetail, setIsLoadingDetail] = useState(false);
 
@@ -193,15 +294,11 @@ export default function HistoriSiswa() {
       const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
       const raw = res.data?.data;
 
-      console.log('raw keys:', raw ? Object.keys(raw) : 'null');
-      console.log('raw.jawabans:', raw?.jawabans);
-      console.log('raw.jawaban:', raw?.jawaban);
-
       setDetail({
-        siswa: raw?.siswa || '',
+        siswa:       raw?.siswa || '',
         nilai_akhir: raw?.nilai_akhir || raw?.siswa_ujian?.nilai_akhir || item.nilai_akhir || '0',
-        breakdown: raw?.breakdown ?? [],
-        jawabans: raw?.jawabans ?? raw?.jawaban ?? [],
+        breakdown:   raw?.breakdown ?? [],
+        jawabans:    raw?.jawabans ?? raw?.jawaban ?? [],
       });
       setSelectedSiswaUjianId(item.id);
     } catch (err: any) {
@@ -239,7 +336,7 @@ export default function HistoriSiswa() {
             </p>
           </div>
           <div className="absolute top-1/2 right-12 -translate-y-1/2 text-right hidden sm:block">
-            <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-0">SKOR AKHIR</p>
+            <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-0">NILAI AKHIR</p>
             <h2 className="text-7xl font-black italic tracking-tighter leading-none">{detail.nilai_akhir}</h2>
           </div>
         </div>
@@ -255,8 +352,11 @@ export default function HistoriSiswa() {
             <h2 className="text-xs font-black text-navy uppercase tracking-[0.3em]">Review Soal & Jawaban</h2>
 
             {detail.jawabans.map((jawabanItem, idx) => {
-              const { soal, jawaban_siswa, nilai } = jawabanItem;
-              const isCorrect = nilai > 0;
+              const { soal, jawaban_siswa } = jawabanItem;
+
+              // ── Hitung skor di frontend karena backend kirim nilai: null ──
+              const skorAkhir = hitungSkor(jawabanItem);
+              const isCorrect = skorAkhir > 0;
 
               // ── Gambar ──
               const rawGambar = soal.jalur_gambar || soal.path_gambar || null;
@@ -265,9 +365,9 @@ export default function HistoriSiswa() {
                 : null;
 
               // ── Objektif / Ganda: precompute ──
-              const selectedIds = jawaban_siswa?.id_pilihan_terpilih ?? [];
+              const selectedIds     = jawaban_siswa?.id_pilihan_terpilih ?? [];
               const selectedPilihan = soal.pilihan_jawaban.filter(p => selectedIds.includes(p.id));
-              const correctPilihan = soal.pilihan_jawaban.filter(p => p.is_true === 1);
+              const correctPilihan  = soal.pilihan_jawaban.filter(p => p.is_true === 1);
 
               // ── Menjodohkan: precompute matches ──
               const matchResults = soal.pilihan_jawaban.map(p => {
@@ -300,7 +400,7 @@ export default function HistoriSiswa() {
                     isCorrect ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100',
                   )}>
                     <span className="text-[10px] font-black text-navy uppercase">Soal No. {idx + 1}</span>
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-3">
                       {isCorrect ? (
                         <div className="flex items-center gap-1.5 text-green-600">
                           <CheckCircle2 size={14} />
@@ -312,8 +412,14 @@ export default function HistoriSiswa() {
                           <span className="text-[9px] font-black uppercase">Salah</span>
                         </div>
                       )}
-                      <div className="ml-3 px-2 py-0.5 bg-white rounded border border-slate-200 text-[10px] font-black text-navy">
-                        Skor: {nilai}
+                      {/* Skor di header card */}
+                      <div className={cn(
+                        'px-2 py-0.5 rounded border text-[10px] font-black',
+                        isCorrect
+                          ? 'bg-green-100 border-green-200 text-green-700'
+                          : 'bg-red-100 border-red-200 text-red-600',
+                      )}>
+                        Skor: {skorAkhir}
                       </div>
                     </div>
                   </div>
@@ -339,19 +445,14 @@ export default function HistoriSiswa() {
                     {/* ── Jawaban Section ── */}
                     <div className="border-t border-slate-100 pt-5 space-y-5">
 
-                      {/* ────────────────────────────────── */}
-                      {/* OBJEKTIF / GANDA KOMPLEKS         */}
-                      {/* ────────────────────────────────── */}
+                      {/* ──────────────────────────────────── */}
+                      {/* OBJEKTIF / GANDA KOMPLEKS            */}
+                      {/* ──────────────────────────────────── */}
                       {['objektif', 'ganda_kompleks'].includes(soal.tipe_soal) && (
                         <div className="space-y-4">
 
-                          {/* Jawaban Kamu */}
                           <div>
-                            <SectionLabel
-                              icon={<User size={10} />}
-                              label="Jawaban Kamu"
-                              variant="neutral"
-                            />
+                            <SectionLabel icon={<User size={10} />} label="Jawaban Kamu" variant="neutral" />
                             <div className="space-y-1.5">
                               {selectedPilihan.length === 0 ? (
                                 <EmptyRow />
@@ -363,36 +464,35 @@ export default function HistoriSiswa() {
                             </div>
                           </div>
 
-                          {/* Kunci Jawaban */}
                           <div>
-                            <SectionLabel
-                              icon={<GraduationCap size={10} />}
-                              label="Kunci Jawaban"
-                              variant="green"
-                            />
+                            <SectionLabel icon={<GraduationCap size={10} />} label="Kunci Jawaban" variant="green" />
                             <div className="space-y-1.5">
-                              {correctPilihan.map(p => (
-                                <KunciRow key={p.id} text={p.teks_pilihan} />
-                              ))}
+                              {correctPilihan.length === 0 ? (
+                                <EmptyRow label="Tidak ada kunci jawaban" />
+                              ) : (
+                                correctPilihan.map(p => (
+                                  <KunciRow key={p.id} text={p.teks_pilihan} />
+                                ))
+                              )}
                             </div>
+                          </div>
+
+                          <div>
+                            <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
+                            <SkorBadge nilai={skorAkhir} isCorrect={isCorrect} />
                           </div>
 
                         </div>
                       )}
 
-                      {/* ────────────────────────────────── */}
-                      {/* MENJODOHKAN                       */}
-                      {/* ────────────────────────────────── */}
+                      {/* ──────────────────────────────────── */}
+                      {/* MENJODOHKAN                         */}
+                      {/* ──────────────────────────────────── */}
                       {soal.tipe_soal === 'menjodohkan' && (
                         <div className="space-y-4">
 
-                          {/* Jawaban Kamu */}
                           <div>
-                            <SectionLabel
-                              icon={<User size={10} />}
-                              label="Jawaban Kamu"
-                              variant="neutral"
-                            />
+                            <SectionLabel icon={<User size={10} />} label="Jawaban Kamu" variant="neutral" />
                             <div className="space-y-1.5">
                               {matchResults.map(({ p, teksJawaban, isMatch }) => (
                                 <div
@@ -427,13 +527,8 @@ export default function HistoriSiswa() {
                             </div>
                           </div>
 
-                          {/* Kunci Jawaban */}
                           <div>
-                            <SectionLabel
-                              icon={<GraduationCap size={10} />}
-                              label="Kunci Jawaban"
-                              variant="green"
-                            />
+                            <SectionLabel icon={<GraduationCap size={10} />} label="Kunci Jawaban" variant="green" />
                             <div className="space-y-1.5">
                               {soal.pilihan_jawaban.map(p => (
                                 <div
@@ -451,22 +546,22 @@ export default function HistoriSiswa() {
                             </div>
                           </div>
 
+                          <div>
+                            <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
+                            <SkorBadge nilai={skorAkhir} isCorrect={isCorrect} />
+                          </div>
+
                         </div>
                       )}
 
-                      {/* ────────────────────────────────── */}
-                      {/* ISIAN / ESSAY                     */}
-                      {/* ────────────────────────────────── */}
+                      {/* ──────────────────────────────────── */}
+                      {/* ISIAN / ESSAY                       */}
+                      {/* ──────────────────────────────────── */}
                       {['isian', 'essay'].includes(soal.tipe_soal) && (
                         <div className="space-y-4">
 
-                          {/* Jawaban Kamu */}
                           <div>
-                            <SectionLabel
-                              icon={<User size={10} />}
-                              label="Jawaban Kamu"
-                              variant="neutral"
-                            />
+                            <SectionLabel icon={<User size={10} />} label="Jawaban Kamu" variant="neutral" />
                             <div className="p-4 bg-slate-50 border border-slate-200 rounded-lg">
                               {jawaban_siswa?.jawaban_teks ? (
                                 <p className="text-xs font-bold text-navy italic leading-relaxed">
@@ -478,28 +573,18 @@ export default function HistoriSiswa() {
                             </div>
                           </div>
 
-                          {/* Nilai Manual Guru */}
-                          {jawaban_siswa?.nilai_manual_guru != null && (
-                            <div>
-                              <SectionLabel
-                                icon={<GraduationCap size={10} />}
-                                label="Nilai dari Guru"
-                                variant="blue"
-                              />
-                              <div className="flex items-baseline gap-2 p-4 bg-light-blue/5 border border-light-blue/20 rounded-lg">
-                                <span className="text-2xl font-black text-navy italic tracking-tighter">
-                                  {jawaban_siswa.nilai_manual_guru}
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">/ 100</span>
-                              </div>
-                            </div>
-                          )}
+                          
+
+                          <div>
+                            <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
+                            <SkorBadge nilai={skorAkhir} isCorrect={isCorrect} />
+                          </div>
 
                         </div>
                       )}
 
-                    </div>{/* end jawaban section */}
-                  </div>{/* end card body */}
+                    </div>
+                  </div>
                 </div>
               );
             })}

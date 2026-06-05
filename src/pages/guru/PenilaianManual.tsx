@@ -26,7 +26,7 @@ interface PilihanJawaban {
   teks_pilihan: string;
   teks_pasangan: string;
   persentase_nilai: number;
-  is_true: number;
+  is_true: number | boolean;
 }
 
 interface Soal {
@@ -35,8 +35,6 @@ interface Soal {
   tipe_soal: string;
   teks_soal: string;
   path_gambar: string | null;
-  // ✅ Isian: kunci dari pilihan_jawaban is_true=1
-  // ✅ Essay: kunci dari field kunci_jawaban / kunci_essay
   pilihan_jawaban: PilihanJawaban[];
   kunci_jawaban?: string | null;
   kunci_essay?: string | null;
@@ -63,26 +61,22 @@ interface UjianManual {
   pending_count: number;
 }
 
-// ─── Helper: build gambar URL ─────────────────────────────────
+// ─── Helper ───────────────────────────────────────────────────
 const getGambarUrl = (path: string | null | undefined): string | null => {
   if (!path) return null;
   return path.startsWith('http') ? path : `${BASE_STORAGE_URL}${path}`;
 };
 
-// ─── Sub-component: Kunci Jawaban Box ─────────────────────────
+// ─── Kunci Jawaban Box ────────────────────────────────────────
 function KunciJawabanBox({ soal }: { soal: Soal }) {
-  const kunciIsan = soal.tipe_soal === 'isian'
-    ? soal.pilihan_jawaban.filter(p => p.is_true === 1 || p.is_true as any === true)
-    : [];
+  // ✅ Isian & Essay: keduanya simpen kunci di pilihan_jawaban is_true
+  //    (sama persis cara useBankSoal submit — semua tipe pakai pilihan_jawaban)
+  const kunciPilihan = soal.pilihan_jawaban.filter(p => !!p.is_true);
 
-  const kunciEssay = soal.tipe_soal === 'essay'
+  // Fallback untuk essay: field kunci_jawaban / kunci_essay kalau ada
+  const kunciEssayFallback = soal.tipe_soal === 'essay'
     ? (soal.kunci_jawaban || soal.kunci_essay || null)
     : null;
-
-  // Kalau tidak ada kunci sama sekali, tidak tampilkan apapun
-  const hasKunci =
-    (soal.tipe_soal === 'isian' && kunciIsan.length > 0) ||
-    (soal.tipe_soal === 'essay' && kunciEssay);
 
   return (
     <div className="mt-4 pt-3 border-t border-white/10">
@@ -93,11 +87,11 @@ function KunciJawabanBox({ soal }: { soal: Soal }) {
         </span>
       </div>
 
-      {/* ── Isian: tampilkan setiap pilihan yang is_true ── */}
+      {/* ── Isian ── */}
       {soal.tipe_soal === 'isian' && (
-        kunciIsan.length > 0 ? (
+        kunciPilihan.length > 0 ? (
           <div className="space-y-1.5">
-            {kunciIsan.map(p => (
+            {kunciPilihan.map(p => (
               <div
                 key={p.id}
                 className="flex items-start gap-2 bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2"
@@ -110,37 +104,46 @@ function KunciJawabanBox({ soal }: { soal: Soal }) {
             ))}
           </div>
         ) : (
-          <p className="text-[11px] text-white/30 italic">
-            Kunci jawaban tidak tersedia
-          </p>
+          <p className="text-[11px] text-white/30 italic">Kunci jawaban tidak tersedia</p>
         )
       )}
 
-      {/* ── Essay: tampilkan rubrik / kunci ── */}
+      {/* ── Essay ──
+           Prioritas: pilihan_jawaban is_true → kunci_jawaban field → not available  */}
       {soal.tipe_soal === 'essay' && (
-        kunciEssay ? (
-          <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-2.5">
+        kunciPilihan.length > 0 ? (
+          <div className="space-y-1.5">
+            {kunciPilihan.map(p => (
+              <div
+                key={p.id}
+                className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-3"
+              >
+                <p className="text-[12px] font-bold text-green-300 leading-relaxed whitespace-pre-wrap">
+                  {p.teks_pilihan}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : kunciEssayFallback ? (
+          <div className="bg-green-500/10 border border-green-500/20 rounded-lg px-3 py-3">
             <p className="text-[12px] font-bold text-green-300 leading-relaxed whitespace-pre-wrap">
-              {kunciEssay}
+              {kunciEssayFallback}
             </p>
           </div>
         ) : (
-          <p className="text-[11px] text-white/30 italic">
-            Rubrik penilaian tidak tersedia
-          </p>
+          <p className="text-[11px] text-white/30 italic">Rubrik penilaian tidak tersedia</p>
         )
       )}
     </div>
   );
 }
 
-// ─── Component ────────────────────────────────────────────────
+// ─── Main Component ───────────────────────────────────────────
 export default function PenilaianManual() {
   const [ujians, setUjians] = useState<UjianManual[]>([]);
   const [selectedUjianId, setSelectedUjianId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [scores, setScores] = useState<Record<string, number>>({});
-
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [pendingAnswers, setPendingAnswers] = useState<JawabanPending[]>([]);
@@ -166,16 +169,34 @@ export default function PenilaianManual() {
   };
 
   // ─── Fetch pending answers ─────────────────────────────────────
+  //
+  // FIX: endpoint /list-penilaian-manual TIDAK include pilihan_jawaban.
+  //      Kita fetch /ujian/{id}/soal secara paralel (endpoint yang sama
+  //      dengan bank soal guru) → dapat pilihan_jawaban lengkap → merge.
+  //
   const fetchPendingAnswers = async (ujianId: number) => {
     try {
       setIsLoading(true);
       setError(null);
 
-      const manualRes = await api.get(`/ujian/${ujianId}/list-penilaian-manual`);
+      // ✅ Parallel fetch: pending answers + soal lengkap (dengan pilihan_jawaban)
+      const [manualRes, soalRes] = await Promise.all([
+        api.get(`/ujian/${ujianId}/list-penilaian-manual`),
+        api.get(`ujian/${ujianId}/soal`),  // sama persis dengan useBankSoal guru
+      ]);
+
+      // ── Parse pending answers ──────────────────────────────────
       const manualData = manualRes.data?.data;
       const siswaUjians: any[] = Array.isArray(manualData?.siswa_ujians)
         ? manualData.siswa_ujians
         : [];
+
+      // ── Build soal map: soalId → soal (includes pilihan_jawaban) ──
+      const soalRaw = soalRes.data?.data;
+      const soalList: any[] = Array.isArray(soalRaw) ? soalRaw : soalRaw?.data ?? [];
+      const soalMap = new Map<number, any>(soalList.map((s: any) => [s.id, s]));
+
+      console.log('[PenilaianManual] soalMap sample:', soalList[0]);
 
       if (siswaUjians.length === 0) {
         setPendingAnswers([]);
@@ -188,6 +209,9 @@ export default function PenilaianManual() {
         const jawabans: any[] = su.jawabans ?? [];
 
         jawabans.forEach((jaw: any) => {
+          // ✅ Ambil data soal LENGKAP dari soalMap (include pilihan_jawaban)
+          const fullSoal = soalMap.get(jaw.soal_id);
+
           allAnswers.push({
             id:                jaw.jawaban_id,
             id_ujian:          ujianId,
@@ -196,17 +220,16 @@ export default function PenilaianManual() {
             jawaban_teks:      jaw.jawaban_teks ?? null,
             nilai_manual_guru: null,
             soal: {
-              id:              jaw.soal_id,
-              id_ujian:        ujianId,
-              tipe_soal:       jaw.tipe_soal,
-              teks_soal:       jaw.teks_soal,
-              // ✅ path_gambar dari API (sebelumnya hardcode null)
-              path_gambar:     jaw.path_gambar ?? null,
-              // ✅ pilihan_jawaban dari API — berisi kunci untuk isian
-              pilihan_jawaban: jaw.pilihan_jawaban ?? [],
-              // ✅ kunci_jawaban / kunci_essay untuk essay
-              kunci_jawaban:   jaw.kunci_jawaban ?? null,
-              kunci_essay:     jaw.kunci_essay   ?? null,
+              id:       jaw.soal_id,
+              id_ujian: ujianId,
+              tipe_soal: fullSoal?.tipe_soal ?? jaw.tipe_soal,
+              teks_soal: fullSoal?.teks_soal ?? jaw.teks_soal,
+              path_gambar: fullSoal?.path_gambar ?? jaw.path_gambar ?? null,
+              // ✅ KEY FIX: pilihan_jawaban dari soal endpoint yang LENGKAP
+              //    (fullSoal punya pilihan_jawaban karena diambil dari bank soal)
+              pilihan_jawaban: fullSoal?.pilihan_jawaban ?? jaw.pilihan_jawaban ?? [],
+              kunci_jawaban:   fullSoal?.kunci_jawaban ?? jaw.kunci_jawaban ?? null,
+              kunci_essay:     fullSoal?.kunci_essay ?? jaw.kunci_essay ?? null,
             },
             siswa:         su.siswa ?? undefined,
             waktu_selesai: su.waktu_selesai ?? undefined,
@@ -229,11 +252,7 @@ export default function PenilaianManual() {
   }, [selectedUjianId]);
 
   // ─── Grade Isian ───────────────────────────────────────────────
-  const handleGradeIsan = async (
-    siswaUjianId: number,
-    soalId: number,
-    isTrue: boolean
-  ) => {
+  const handleGradeIsan = async (siswaUjianId: number, soalId: number, isTrue: boolean) => {
     try {
       setIsSaving(true);
       await api.put(`/ujian/${siswaUjianId}/isian`, {
@@ -248,11 +267,7 @@ export default function PenilaianManual() {
   };
 
   // ─── Grade Essay ───────────────────────────────────────────────
-  const handleGradeEssay = async (
-    siswaUjianId: number,
-    soalId: number,
-    nilai: number
-  ) => {
+  const handleGradeEssay = async (siswaUjianId: number, soalId: number, nilai: number) => {
     try {
       setIsSaving(true);
       await api.put(`/ujian/${siswaUjianId}/essay`, {
@@ -271,7 +286,7 @@ export default function PenilaianManual() {
     }
   };
 
-  // ─── Filter & Group by soal ────────────────────────────────────
+  // ─── Filter & Group ───────────────────────────────────────────
   const filtered = pendingAnswers.filter(ans => {
     if (!searchQuery) return true;
     const name = ans.siswa?.nama ?? '';
@@ -291,11 +306,11 @@ export default function PenilaianManual() {
     {}
   );
 
-  // ─── Render ────────────────────────────────────────────────────
+  // ─── Render ───────────────────────────────────────────────────
   return (
     <div className="space-y-6">
 
-      {/* ── Header & Filter ── */}
+      {/* Header & Filter */}
       <div className="bg-white p-6 rounded border border-exam-border shadow-sm">
         <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
           <div>
@@ -343,7 +358,7 @@ export default function PenilaianManual() {
         </div>
       </div>
 
-      {/* ── Error Alert ── */}
+      {/* Error Alert */}
       {error && (
         <div className="bg-red-50 border border-red-100 p-4 rounded flex items-center gap-3">
           <AlertCircle size={16} className="text-red-500 shrink-0" />
@@ -354,11 +369,10 @@ export default function PenilaianManual() {
         </div>
       )}
 
-      {/* ── Content ── */}
+      {/* Content */}
       <div className="space-y-4">
         <AnimatePresence mode="popLayout">
 
-          {/* Loading */}
           {isLoading ? (
             <motion.div
               initial={{ opacity: 0 }}
@@ -373,7 +387,6 @@ export default function PenilaianManual() {
               </div>
             </motion.div>
 
-          /* Has data */
           ) : Object.keys(groupedByQuestion).length > 0 ? (
             Object.entries(groupedByQuestion).map(([soalId, answers], idx) => {
               const firstAnswer = answers[0];
@@ -390,10 +403,8 @@ export default function PenilaianManual() {
                   transition={{ delay: idx * 0.05 }}
                   className="bg-white rounded border border-exam-border shadow-sm overflow-hidden"
                 >
-                  {/* ── Question Header ── */}
+                  {/* Question Header */}
                   <div className="p-5 bg-navy border-b border-white/10 text-white">
-
-                    {/* Tipe soal + jumlah siswa */}
                     <div className="flex items-center justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <BookOpen size={16} className="text-light-blue" />
@@ -406,28 +417,19 @@ export default function PenilaianManual() {
                       </span>
                     </div>
 
-                    {/* Gambar soal */}
                     {gambarUrl && (
                       <div className="mb-3 rounded-lg overflow-hidden border border-white/10 w-fit">
-                        <img
-                          src={gambarUrl}
-                          alt="Gambar soal"
-                          className="max-h-44 object-contain"
-                        />
+                        <img src={gambarUrl} alt="Gambar soal" className="max-h-44 object-contain" />
                       </div>
                     )}
 
-                    {/* Teks soal */}
-                    <p className="text-sm font-bold leading-relaxed">
-                      {soal?.teks_soal}
-                    </p>
+                    <p className="text-sm font-bold leading-relaxed">{soal?.teks_soal}</p>
 
-                    {/* ✅ Kunci Jawaban — tampil di bawah soal */}
+                    {/* ✅ Kunci Jawaban — data dari bank soal (pilihan_jawaban) */}
                     {soal && <KunciJawabanBox soal={soal} />}
-
                   </div>
 
-                  {/* ── Student Answers ── */}
+                  {/* Student Answers */}
                   <div className={cn(
                     isIsan
                       ? 'p-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 bg-slate-50/50'
@@ -436,14 +438,13 @@ export default function PenilaianManual() {
                     {answers.map(ans => {
                       const scoreKey = `${ans.id_siswa_ujian}-${ans.soal_id}`;
 
-                      // ── Isian Card ────────────────────────────
+                      // ── Isian Card ───────────────────────────
                       if (isIsan) {
                         return (
                           <div
                             key={ans.id}
                             className="bg-white p-3 rounded border border-slate-200 shadow-sm flex flex-col gap-3 hover:border-light-blue transition-all"
                           >
-                            {/* Nama siswa */}
                             <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
                               <div className="min-w-0 flex-1">
                                 <p className="text-[10px] font-black text-navy uppercase truncate">
@@ -451,9 +452,7 @@ export default function PenilaianManual() {
                                 </p>
                                 <p className="text-[8px] text-slate-400 font-bold uppercase tracking-tighter">
                                   {ans.waktu_selesai
-                                    ? new Date(ans.waktu_selesai).toLocaleTimeString([], {
-                                        hour: '2-digit', minute: '2-digit',
-                                      })
+                                    ? new Date(ans.waktu_selesai).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                                     : '-'}
                                 </p>
                               </div>
@@ -462,7 +461,6 @@ export default function PenilaianManual() {
                               </div>
                             </div>
 
-                            {/* Jawaban siswa */}
                             <div className="flex-1 py-1">
                               <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">
                                 Jawaban Siswa
@@ -472,7 +470,6 @@ export default function PenilaianManual() {
                               </p>
                             </div>
 
-                            {/* Tombol nilai */}
                             <div className="flex items-center gap-1.5 pt-1">
                               <button
                                 onClick={() => handleGradeIsan(ans.id_siswa_ujian, ans.soal_id, false)}
@@ -493,13 +490,12 @@ export default function PenilaianManual() {
                         );
                       }
 
-                      // ── Essay Row ─────────────────────────────
+                      // ── Essay Row ────────────────────────────
                       return (
                         <div
                           key={ans.id}
                           className="p-5 flex flex-col md:flex-row md:items-center gap-4 hover:bg-slate-50 transition-colors"
                         >
-                          {/* Nama siswa */}
                           <div className="md:w-1/4 shrink-0">
                             <div className="flex items-center gap-3">
                               <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 border border-slate-200">
@@ -518,7 +514,6 @@ export default function PenilaianManual() {
                             </div>
                           </div>
 
-                          {/* Jawaban siswa */}
                           <div className="flex-1">
                             <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1.5">
                               Jawaban Siswa
@@ -532,7 +527,6 @@ export default function PenilaianManual() {
                             </div>
                           </div>
 
-                          {/* Input nilai */}
                           <div className="md:w-1/4 shrink-0 flex justify-end">
                             <div className="flex items-center gap-1.5 w-full max-w-[140px]">
                               <input
@@ -567,7 +561,6 @@ export default function PenilaianManual() {
               );
             })
 
-          /* Empty state */
           ) : (
             <motion.div
               initial={{ opacity: 0 }}

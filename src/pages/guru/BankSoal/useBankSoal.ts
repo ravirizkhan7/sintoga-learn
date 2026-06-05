@@ -19,7 +19,7 @@ export const getInitialSoalState = (): NewSoalState => ({
   teks_soal: '',
   gambarFile: null,
   gambarPreview: '',
-  gambarHapus: false, 
+  gambarHapus: false,
   pilihan: [makePilihan({ is_true: true, persentase_nilai: 100 })],
 });
 
@@ -140,7 +140,17 @@ export function useBankSoal(ujianId: number | null) {
   // ─── Pilihan Handlers ────────────────────────────────────────
 
   const handleAddOption = () => {
-    setNewSoal(prev => ({ ...prev, pilihan: [...prev.pilihan, makePilihan()] }));
+    setNewSoal(prev => ({
+      ...prev,
+      pilihan: [
+        ...prev.pilihan,
+        makePilihan(
+          prev.tipe_soal === 'menjodohkan'
+            ? { is_true: true, persentase_nilai: 100 }
+            : {}
+        ),
+      ],
+    }));
   };
 
   const handleRemoveOption = (_id: number) => {
@@ -177,7 +187,6 @@ export function useBankSoal(ujianId: number | null) {
     return new Promise((resolve) => {
       const maxBytes = maxSizeMB * 1024 * 1024;
 
-      // Kalau udah di bawah limit, langsung return
       if (file.size <= maxBytes) {
         resolve(file);
         return;
@@ -192,7 +201,6 @@ export function useBankSoal(ujianId: number | null) {
         const canvas = document.createElement('canvas');
         let { width, height } = img;
 
-        // Hitung rasio kompresi berdasarkan ukuran file
         const ratio = Math.sqrt(maxBytes / file.size);
         width = Math.round(width * ratio);
         height = Math.round(height * ratio);
@@ -203,7 +211,6 @@ export function useBankSoal(ujianId: number | null) {
         const ctx = canvas.getContext('2d')!;
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Coba quality dari 0.9 turun sampai ukuran cukup kecil
         const tryCompress = (quality: number) => {
           canvas.toBlob(
             (blob) => {
@@ -240,7 +247,6 @@ export function useBankSoal(ujianId: number | null) {
       URL.revokeObjectURL(newSoal.gambarPreview);
     }
 
-    // Kompresi otomatis kalau > 2 MB
     const compressed = await compressImage(file, 2);
 
     setNewSoal(prev => ({
@@ -248,15 +254,15 @@ export function useBankSoal(ujianId: number | null) {
       gambarFile: compressed,
       gambarPreview: URL.createObjectURL(compressed),
     }));
-};
+  };
 
   const handleRemoveGambar = () => {
     if (newSoal.gambarPreview?.startsWith('blob:')) {
       URL.revokeObjectURL(newSoal.gambarPreview);
     }
-    setNewSoal(prev => ({ 
-      ...prev, 
-      gambarFile: null, 
+    setNewSoal(prev => ({
+      ...prev,
+      gambarFile: null,
       gambarPreview: '',
       gambarHapus: true,
     }));
@@ -270,7 +276,22 @@ export function useBankSoal(ujianId: number | null) {
     try {
       setIsSubmittingSoal(true);
 
-      const pilihanPayload = newSoal.pilihan.map(({ _id, ...rest }) => rest);
+      const pilihanPayload = newSoal.pilihan.map(({ _id, ...rest }) => {
+        if (newSoal.tipe_soal === 'menjodohkan') {
+          // ✅ FIX: Hanya pasangan yang KEDUANYA terisi yang dapat nilai 100
+          // Kalau salah satu kosong (item tanpa pasangan, atau pasangan tanpa item) → 0
+          const itemTerisi   = (rest.teks_pilihan?.trim() ?? '').length > 0;
+          const pasangTerisi = (rest.teks_pasangan?.trim() ?? '').length > 0;
+          const pasanganLengkap = itemTerisi && pasangTerisi;
+          return {
+            ...rest,
+            is_true: pasanganLengkap,
+            persentase_nilai: pasanganLengkap ? 100 : 0,
+          };
+        }
+        return rest;
+      });
+
       const isEdit = editingSoalId !== null;
       const url = isEdit
         ? `ujian/${ujianId}/soal/${editingSoalId}`

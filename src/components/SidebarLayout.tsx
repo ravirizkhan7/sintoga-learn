@@ -1,4 +1,4 @@
-import React, { ReactNode, useState, useEffect } from 'react'; // ← tambah useEffect
+import React, { ReactNode, useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../App';
 import { 
@@ -49,10 +49,11 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
     password_confirmation: '',
   });
   const [editProfileLoading, setEditProfileLoading] = useState(false);
+
   useEffect(() => {
     if (!isBankSoalOpen) setBankSoalSearch('');
   }, [isBankSoalOpen]);
-  // ← Fetch ujian guru dari backend
+
   useEffect(() => {
     if (user?.role === 'guru') {
       api.get('/ujian')
@@ -105,8 +106,6 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
     navigate('/login', { replace: true });
   };
 
-  const pendingGradesCount = 0;
-
   const menuItems = {
     siswa: [
       { path: '/siswa', icon: LayoutDashboard, label: 'Dashboard' },
@@ -124,7 +123,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
           label: exam.judul_ujian
         }))
       },
-      { path: '/guru/penilaian', icon: FileCheck, label: 'Penilaian Manual', badge: pendingGradesCount },
+      { path: '/guru/penilaian', icon: FileCheck, label: 'Penilaian Manual' },
       { path: '/guru/monitor', icon: Monitor, label: 'Monitoring' },
       { path: '/guru/rekap', icon: History, label: 'Rekap Histori' },
     ],
@@ -319,14 +318,6 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
                   <span className={cn("font-semibold text-sm transition-all", !isSidebarOpen && "lg:hidden lg:opacity-0")}>
                     {item.label}
                   </span>
-                  {item.badge > 0 && isSidebarOpen && (
-                    <span className="ml-auto bg-red-500 text-white text-[10px] font-black px-1.5 py-0.5 rounded-full min-w-[18px] text-center shadow-lg shadow-red-500/20">
-                      {item.badge}
-                    </span>
-                  )}
-                  {item.badge > 0 && !isSidebarOpen && (
-                    <div className="absolute top-2 right-2 w-2 h-2 bg-red-500 rounded-full border border-navy" />
-                  )}
                 </Link>
               )}
             </div>
