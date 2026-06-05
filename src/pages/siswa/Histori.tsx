@@ -124,17 +124,24 @@ function hitungSkor(item: JawabanItem): number {
     return total;
   }
 
-  // ── Menjodohkan: hitung pasangan benar / total pasangan ──────
+  // ── Menjodohkan: hitung pasangan benar / pasangan valid ──────
   if (tipe === 'menjodohkan') {
     const pasanganTerpilih = jawaban_siswa?.pasangan_terpilih ?? [];
     if (pasanganTerpilih.length === 0) return 0;
 
-    const totalPasangan = pilihan.length;
-    if (totalPasangan === 0) return 0;
+    // Pasangan valid = KEDUANYA teks_pilihan DAN teks_pasangan terisi
+    // Pengecoh bisa punya salah satu kosong — tidak ikut dihitung di denominator
+    const pasanganValid = pilihan.filter(
+      p =>
+        p.teks_pilihan != null && p.teks_pilihan.trim() !== '' &&
+        p.teks_pasangan != null && p.teks_pasangan.trim() !== ''
+    );
+    const totalValid = pasanganValid.length;
+    if (totalValid === 0) return 0;
 
-    // Hitung berapa pasangan yang cocok
+    // Hitung berapa pasangan valid yang dijawab benar
     let benar = 0;
-    pilihan.forEach(p => {
+    pasanganValid.forEach(p => {
       const match = pasanganTerpilih.find(
         (pt: any) =>
           pt?.item_id === p.id ||
@@ -144,7 +151,7 @@ function hitungSkor(item: JawabanItem): number {
       );
       if (!match) return;
 
-      // Cek apakah teks pasangan yang dipilih cocok dengan kunci
+      // Resolve teks jawaban siswa untuk item ini
       const teksJawaban =
         match?.pasangan ||
         match?.teks_pasangan ||
@@ -163,8 +170,9 @@ function hitungSkor(item: JawabanItem): number {
       }
     });
 
-    // Skor = (pasangan benar / total pasangan) * 100
-    return Math.round((benar / totalPasangan) * 100);
+    // Skor = (pasangan benar / pasangan valid) * 100
+    // Contoh: 3 benar dari 3 pasangan valid → 100, meski ada 2 pengecoh
+    return Math.round((benar / totalValid) * 100);
   }
 
   return 0;
@@ -572,8 +580,6 @@ export default function HistoriSiswa() {
                               )}
                             </div>
                           </div>
-
-                          
 
                           <div>
                             <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
