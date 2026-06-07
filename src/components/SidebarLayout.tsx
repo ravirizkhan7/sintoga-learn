@@ -556,7 +556,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
         <div className="p-4 lg:p-6 bg-white border-t border-exam-border flex flex-col sm:flex-row items-center justify-between gap-2 text-[10px] text-slate-500 uppercase font-black tracking-tight shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-2 h-2 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
-            <span>System Status: Online / 192.168.1.1</span>
+            <span>System Status: Online</span>
           </div>
           <div className="italic text-navy/40">Sintoga Learn v1.2.5-stable • SMK SINTOGA DIGITAL</div>
         </div>
