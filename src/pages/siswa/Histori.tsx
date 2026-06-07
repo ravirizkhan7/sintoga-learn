@@ -330,28 +330,34 @@ export default function HistoriSiswa() {
         </button>
 
 {/* ── Header Score ── */}
-<div className="bg-navy rounded-lg p-6 sm:p-8 text-white relative overflow-hidden shadow-xl border-b-8 border-light-blue flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+<div className="bg-navy rounded-lg p-6 text-white relative overflow-hidden shadow-xl border-b-8 border-light-blue">
   
-  {/* Sisi Kiri: Judul & Detail */}
-  <div className="relative z-10">
-    <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded border border-white/20 mb-4">
-      <History size={14} className="text-light-blue" />
-      <span className="text-[9px] font-black uppercase tracking-widest">Detail Hasil Ujian</span>
+  {/* Menggunakan grid: 1 kolom di mobile, 2 kolom di layar desktop (sm) */}
+  <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+    
+    {/* Sisi Kiri: Detail info ujian */}
+    <div className="flex flex-col items-start">
+      <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded border border-white/20 mb-3">
+        <History size={14} className="text-light-blue" />
+        <span className="text-[9px] font-black uppercase tracking-widest">Detail Hasil Ujian</span>
+      </div>
+      <h1 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 uppercase break-all">
+        {getJudulUjian(selectedItem)}
+      </h1>
+      <p className="text-blue-100/70 text-[10px] font-black uppercase tracking-widest">
+        {detail.siswa} · Status: {selectedItem.status}
+      </p>
     </div>
-    <h1 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 uppercase">
-      {getJudulUjian(selectedItem)}
-    </h1>
-    <p className="text-blue-100/70 text-[10px] font-black uppercase tracking-widest">
-      {detail.siswa} · Status: {selectedItem.status}
-    </p>
-  </div>
 
-  {/* Sisi Kanan / Bawah: Nilai Akhir (Sekarang muncul di Mobile & Desktop) */}
-  <div className="text-left sm:text-right z-10">
-    <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-0">NILAI AKHIR</p>
-    <h2 className="text-6xl sm:text-7xl font-black italic tracking-tighter leading-none">{detail.nilai_akhir}</h2>
+    {/* Sisi Kanan: Nilai Akhir */}
+    <div className="text-left sm:text-right mt-4 sm:mt-0 border-t border-white/10 pt-4 sm:border-t-0 sm:pt-0">
+      <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-1">NILAI AKHIR</p>
+      <h2 className="text-5xl sm:text-7xl font-black italic tracking-tighter leading-none text-white">
+        {detail.nilai_akhir ?? '0'}
+      </h2>
+    </div>
+
   </div>
-  
 </div>
 
         {/* ── Review Soal & Jawaban ── */}
