@@ -451,9 +451,17 @@ export default function RuangUjian() {
       await api.post(`/ujian/${siswaUjianId}/submit`);
 
       // 2. Fetch nilai_sementara dari endpoint hasil
+      // 2. Fetch nilai dari endpoint hasil
       try {
         const hasil = await api.get(`/siswa-ujian/${siswaUjianId}/hasil`);
-        setTempScore(hasil.data?.data?.nilai_sementara ?? hasil.data?.nilai_sementara ?? 0);
+        console.log('DEBUG hasil:', hasil.data); // hapus setelah konfirmasi
+        const raw = hasil.data?.data;
+        setTempScore(
+          raw?.nilai_sementara ??  // kalau backend sudah tambah ini
+          raw?.nilai_akhir     ??  // fallback — sama yang dipakai Histori.tsx
+          raw?.siswa_ujian?.nilai_akhir ??
+          0
+        );
       } catch {
         setTempScore(0);
       }
