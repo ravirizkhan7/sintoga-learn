@@ -404,7 +404,7 @@ export default function RuangUjian() {
   // ─────────────────────────────────────────────
   // Submit ujian
   // FIX: /submit tidak butuh body — semua jawaban sudah di-save via /jawaban
-  //      Response menggunakan key `nilai_akhir` (bukan skor_sementara)
+  //      Response menggunakan key `nilai_sementara`
   // ─────────────────────────────────────────────
   const handleFinish = useCallback(async (reason: FinishReason = 'manual') => {
     if (isSubmittingRef.current || isFinishedRef.current) return;
@@ -416,8 +416,8 @@ export default function RuangUjian() {
       // Tidak ada request body — backend pakai jawaban yang sudah disimpan
       const res = await api.post(`/ujian/${siswaUjianId}/submit`);
 
-      // Response: { message, data: { nilai_akhir, ... } }
-      setTempScore(res.data?.data?.nilai_akhir ?? 0);
+      // Response: { message, data: { nilai_sementara, ... } }
+      setTempScore(res.data?.data?.nilai_sementara ?? 0);
       setFinishReason(reason);
       isFinishedRef.current = true;
       setIsFinished(true);
