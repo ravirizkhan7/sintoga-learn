@@ -406,6 +406,40 @@ export default function RuangUjian() {
   // FIX: /submit tidak butuh body — semua jawaban sudah di-save via /jawaban
   //      Response menggunakan key `nilai_sementara`
   // ─────────────────────────────────────────────
+  // const handleFinish = useCallback(async (reason: FinishReason = 'manual') => {
+  //   if (isSubmittingRef.current || isFinishedRef.current) return;
+  //   isSubmittingRef.current = true;
+  //   setIsSubmitting(true);
+  //   setShowConfirm(false);
+
+  //   try {
+  //     // Tidak ada request body — backend pakai jawaban yang sudah disimpan
+  //     const res = await api.post(`/ujian/${siswaUjianId}/submit`);
+
+  //     // Response: { message, data: { nilai_sementara, ... } }
+  //     setTempScore(res.data?.data?.nilai_sementara ?? 0);
+  //     setFinishReason(reason);
+  //     isFinishedRef.current = true;
+  //     setIsFinished(true);
+
+  //   } catch (err: any) {
+  //     const status  = err.response?.status;
+  //     const message: string = err.response?.data?.message ?? '';
+  //     console.log(err.response?.data);
+
+  //     // 422 = server sudah tandai ujian selesai sebelumnya → tetap tampil halaman selesai
+  //     if (status === 422) {
+  //       setFinishReason(reason);
+  //       isFinishedRef.current = true;
+  //       setIsFinished(true);
+  //     } else {
+  //       isSubmittingRef.current = false;
+  //       setApiError(message || 'Gagal mengirim jawaban. Coba lagi.');
+  //     }
+  //   } finally {
+  //     setIsSubmitting(false);
+  //   }
+  // }, [siswaUjianId]); // tidak perlu `jawaban` di deps karena submit tidak kirim body
   const handleFinish = useCallback(async (reason: FinishReason = 'manual') => {
     if (isSubmittingRef.current || isFinishedRef.current) return;
     isSubmittingRef.current = true;
@@ -413,11 +447,17 @@ export default function RuangUjian() {
     setShowConfirm(false);
 
     try {
-      // Tidak ada request body — backend pakai jawaban yang sudah disimpan
-      const res = await api.post(`/ujian/${siswaUjianId}/submit`);
+      // 1. Submit ujian
+      await api.post(`/ujian/${siswaUjianId}/submit`);
 
-      // Response: { message, data: { nilai_sementara, ... } }
-      setTempScore(res.data?.data?.nilai_sementara ?? 0);
+      // 2. Fetch nilai_sementara dari endpoint hasil
+      try {
+        const hasil = await api.get(`/siswa-ujian/${siswaUjianId}/hasil`);
+        setTempScore(hasil.data?.data?.nilai_sementara ?? hasil.data?.nilai_sementara ?? 0);
+      } catch {
+        setTempScore(0);
+      }
+
       setFinishReason(reason);
       isFinishedRef.current = true;
       setIsFinished(true);
@@ -427,8 +467,14 @@ export default function RuangUjian() {
       const message: string = err.response?.data?.message ?? '';
       console.log(err.response?.data);
 
-      // 422 = server sudah tandai ujian selesai sebelumnya → tetap tampil halaman selesai
       if (status === 422) {
+        // Ujian sudah selesai sebelumnya — tetap fetch nilai
+        try {
+          const hasil = await api.get(`/siswa-ujian/${siswaUjianId}/hasil`);
+          setTempScore(hasil.data?.data?.nilai_sementara ?? hasil.data?.nilai_sementara ?? 0);
+        } catch {
+          setTempScore(0);
+        }
         setFinishReason(reason);
         isFinishedRef.current = true;
         setIsFinished(true);
@@ -439,7 +485,7 @@ export default function RuangUjian() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [siswaUjianId]); // tidak perlu `jawaban` di deps karena submit tidak kirim body
+  }, [siswaUjianId]);
 
   // Ref ke handleFinish terbaru — listener yang di-attach sekali
   const handleFinishRef = useRef(handleFinish);
