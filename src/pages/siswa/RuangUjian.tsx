@@ -459,13 +459,39 @@ export default function RuangUjian() {
         setTempScore(
           raw?.nilai_sementara ??  // kalau backend sudah tambah ini
           raw?.nilai_akhir     ??  // fallback — sama yang dipakai Histori.tsx
+          raw?.siswa_ujian?.nilai_sementara ??
           raw?.siswa_ujian?.nilai_akhir ??
           0
         );
       } catch {
         setTempScore(0);
       }
+// 2. Fetch nilai dari endpoint hasil
+// try {
+//   const hasil = await api.get(`/siswa-ujian/${siswaUjianId}/hasil`);
+//   const raw = hasil.data?.data;
+//   const siswaUjian = raw?.siswa_ujian;
 
+//   // Coba ambil dari siswa_ujian dulu
+//   const nilaiDariServer =
+//     siswaUjian?.nilai_sementara ??
+//     siswaUjian?.nilai_akhir ??
+//     null;
+
+//   if (nilaiDariServer !== null) {
+//     setTempScore(nilaiDariServer);
+//   } else {
+//     // Fallback: hitung dari breakdown (untuk yg sudah auto-graded)
+//     const breakdown = raw?.breakdown ?? {};
+//     const types = Object.values(breakdown) as any[];
+//     const totalSoal = types.reduce((acc, t) => acc + (t.total_soal ?? 0), 0);
+//     const totalNilai = types.reduce((acc, t) => acc + ((t.rata_nilai ?? 0) * (t.total_soal ?? 0)), 0);
+//     const nilaiSementara = totalSoal > 0 ? Math.round(totalNilai / totalSoal) : 0;
+//     setTempScore(nilaiSementara);
+//   }
+// } catch {
+//   setTempScore(0);
+// }
       setFinishReason(reason);
       isFinishedRef.current = true;
       setIsFinished(true);
@@ -673,7 +699,7 @@ export default function RuangUjian() {
 
           <div className="mb-5">
             <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-              Nilai Akhir:
+              Nilai Sementara:
             </p>
             <h3 className="text-6xl font-black italic tracking-tighter text-navy leading-none">
               {tempScore}
@@ -683,7 +709,7 @@ export default function RuangUjian() {
           <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest leading-relaxed mb-8">
             {isManual
               ? 'Jawaban kamu telah berhasil terkirim ke server pusat. Soal essay & isian akan dinilai secara manual oleh guru.'
-              : 'Semua jawaban yang telah terisi berhasil dikirim ke server. Nilai akhir akan diumumkan oleh guru.'}
+              : 'Semua jawaban yang telah terisi berhasil dikirim ke server.'}
           </p>
 
           <button
