@@ -71,6 +71,7 @@ interface JawabanItem {
 interface DetailHasil {
   siswa: string;
   nilai_akhir: string;
+  is_nilai_sementara: boolean;
   breakdown: any[];
   jawabans: JawabanItem[];
 }
@@ -295,26 +296,53 @@ export default function HistoriSiswa() {
   };
 
   // ─── Fetch detail ─────────────────────────────────────────────
-  const fetchDetail = async (item: RiwayatItem) => {
-    try {
-      setIsLoadingDetail(true);
-      setSelectedItem(item);
-      const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
-      const raw = res.data?.data;
+// const fetchDetail = async (item: RiwayatItem) => {
+//   try {
+//     setIsLoadingDetail(true);
+//     setSelectedItem(item);
+//     const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
+//     const raw = res.data?.data;
 
-      setDetail({
-        siswa:       raw?.siswa || '',
-        nilai_akhir: raw?.nilai_akhir || raw?.siswa_ujian?.nilai_akhir || item.nilai_akhir || '0',
-        breakdown:   raw?.breakdown ?? [],
-        jawabans:    raw?.jawabans ?? raw?.jawaban ?? [],
-      });
-      setSelectedSiswaUjianId(item.id);
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Gagal mengambil detail hasil ujian');
-    } finally {
-      setIsLoadingDetail(false);
-    }
-  };
+//     setDetail({
+//       siswa:       raw?.siswa || '',
+//       nilai_akhir: raw?.nilai_akhir || raw?.siswa_ujian?.nilai_akhir || item.nilai_akhir || '0',
+//       breakdown:   raw?.breakdown ?? [],
+//       jawabans:    raw?.jawabans ?? raw?.jawaban ?? [],
+//     });
+//     setSelectedSiswaUjianId(item.id);
+//   } catch (err: any) {
+//     alert(err.response?.data?.message || 'Gagal mengambil detail hasil ujian');
+//   } finally {
+//     setIsLoadingDetail(false);
+//   }
+// };
+
+const fetchDetail = async (item: RiwayatItem) => {
+  try {
+    setIsLoadingDetail(true);
+    setSelectedItem(item);
+    const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
+    const raw = res.data?.data;
+
+    // Pisahkan nilai_akhir vs nilai_sementara
+    const nilaiAkhir     = raw?.nilai_akhir ?? raw?.siswa_ujian?.nilai_akhir ?? null;
+    const nilaiSementara = raw?.siswa_ujian?.nilai_sementara ?? null;
+    const isSementara    = !nilaiAkhir && !!nilaiSementara;
+
+    setDetail({
+      siswa:              raw?.siswa || '',
+      nilai_akhir:        nilaiAkhir || nilaiSementara || item.nilai_akhir || '0',
+      is_nilai_sementara: isSementara,
+      breakdown:          raw?.breakdown ?? [],
+      jawabans:           raw?.jawabans ?? raw?.jawaban ?? [],
+    });
+    setSelectedSiswaUjianId(item.id);
+  } catch (err: any) {
+    alert(err.response?.data?.message || 'Gagal mengambil detail hasil ujian');
+  } finally {
+    setIsLoadingDetail(false);
+  }
+};
 
   useEffect(() => { fetchRiwayat(); }, []);
 
@@ -351,10 +379,17 @@ export default function HistoriSiswa() {
 
     {/* Sisi Kanan: Nilai Akhir */}
     <div className="text-left sm:text-right mt-4 sm:mt-0 border-t border-white/10 pt-4 sm:border-t-0 sm:pt-0">
-      <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-1">NILAI AKHIR</p>
+      <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-1">
+        {detail.is_nilai_sementara ? 'NILAI SEMENTARA' : 'NILAI AKHIR'}
+      </p>
       <h2 className="text-5xl sm:text-7xl font-black italic tracking-tighter leading-none text-white">
         {detail.nilai_akhir ?? '0'}
       </h2>
+      {detail.is_nilai_sementara && (
+        <p className="text-[9px] text-yellow-300/70 font-black uppercase tracking-widest mt-1">
+          ⏳ Menunggu penilaian manual guru
+        </p>
+      )}
     </div>
 
   </div>
