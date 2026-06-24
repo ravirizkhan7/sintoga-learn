@@ -596,7 +596,7 @@ const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
                       </label>
                       <input 
                         required 
-                        type="text" 
+                        type="number" 
                         inputMode="numeric"
                         placeholder="Contoh: 004123456"
                         className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded font-bold text-sm text-navy outline-none focus:border-light-blue"
