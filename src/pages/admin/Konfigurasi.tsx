@@ -18,6 +18,159 @@ interface PengaturanItem {
   keterangan: string;
 }
 
+// ============================================================
+// Komponen Card: Device Registration Status
+// ============================================================
+
+interface DeviceRegistrationCardProps {
+  className?: string;
+}
+
+function DeviceRegistrationCard({ className }: DeviceRegistrationCardProps) {
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Deteksi localStorage saat komponen mount
+  useEffect(() => {
+    const storedId = localStorage.getItem('id_pc_lab');
+    setDeviceId(storedId);
+    setIsLoading(false);
+  }, []);
+
+  const handleRegister = () => {
+    const input = prompt('Masukkan nomor PC laboratorium (contoh: LAB-01):');
+    
+    if (input !== null) { // User tidak klik Cancel
+      const cleanedInput = input.trim().toUpperCase();
+      
+      if (!cleanedInput) {
+        alert('Nomor PC tidak boleh kosong');
+        return;
+      }
+
+      localStorage.setItem('id_pc_lab', cleanedInput);
+      setDeviceId(cleanedInput);
+      alert(`Perangkat berhasil didaftarkan dengan ID: ${cleanedInput}`);
+    }
+  };
+
+  const handleReset = () => {
+    const confirm = window.confirm(
+      `Anda yakin ingin menghapus identitas perangkat (${deviceId})?\n\nTindakan ini tidak dapat dibatalkan.`
+    );
+    
+    if (confirm) {
+      localStorage.removeItem('id_pc_lab');
+      setDeviceId(null);
+      alert('Identitas perangkat telah dihapus. Silahkan daftarkan ulang.');
+    }
+  };
+
+  if (isLoading) {
+    return null;
+  }
+
+  const isRegistered = deviceId !== null && deviceId.trim() !== '';
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={cn(
+        'bg-white rounded border shadow-sm overflow-hidden',
+        className
+      )}
+    >
+      {/* Header */}
+      <div className={cn(
+        'p-4 border-b flex items-center gap-2',
+        isRegistered 
+          ? 'bg-green-50/30 border-green-100' 
+          : 'bg-red-50/30 border-red-100'
+      )}>
+        <Globe size={14} className={isRegistered ? 'text-green-600' : 'text-red-600'} />
+        <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">
+          Status Identitas Perangkat
+        </h3>
+      </div>
+
+      {/* Content */}
+      <div className="p-6 flex flex-col items-center justify-center min-h-[200px] gap-4">
+        {isRegistered ? (
+          <>
+            {/* Status Terdaftar */}
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="p-3 rounded-full bg-green-100">
+                <Check size={24} className="text-green-600" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-green-600 uppercase tracking-wider">
+                  Perangkat Terdaftar ✓
+                </p>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  Komputer ini diizinkan untuk ujian
+                </p>
+              </div>
+              <div className="mt-2 px-4 py-2 bg-green-50 border border-green-200 rounded">
+                <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">
+                  ID Perangkat: <span className="font-mono text-sm">{deviceId}</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Tombol Reset */}
+            <button
+              onClick={handleReset}
+              className="mt-4 px-6 py-2.5 bg-red-500 hover:bg-red-600 text-white text-[10px] font-black uppercase tracking-widest rounded transition-colors flex items-center gap-2"
+            >
+              <RefreshCcw size={12} /> Hapus & Reset Perangkat
+            </button>
+          </>
+        ) : (
+          <>
+            {/* Status Belum Terdaftar */}
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="p-3 rounded-full bg-red-100">
+                <X size={24} className="text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-black text-red-600 uppercase tracking-wider">
+                  Perangkat Belum Terdaftar
+                </p>
+                <p className="text-xs text-slate-500 font-medium mt-1">
+                  Komputer ini masih belum didaftarkan untuk ujian
+                </p>
+              </div>
+            </div>
+
+            {/* Tombol Daftar */}
+            <button
+              onClick={handleRegister}
+              className="mt-4 px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded transition-colors flex items-center gap-2"
+            >
+              <Edit2 size={12} /> Daftarkan Perangkat Ini
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Footer Info */}
+      <div className="p-3 border-t border-slate-100 bg-slate-50/30">
+        <p className="text-[9px] text-slate-400 font-medium italic text-center">
+          {isRegistered 
+            ? '💡 Klik tombol di atas jika ingin mengubah atau menghapus identitas perangkat'
+            : '💡 Daftarkan perangkat ini terlebih dahulu sebelum memulai ujian'
+          }
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+
+// ============================================================
+// Komponen Utama: Konfigurasi
+// ============================================================
+
 export default function Konfigurasi() {
   const [settings, setSettings] = useState<PengaturanItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -90,6 +243,7 @@ export default function Konfigurasi() {
         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Parameter keamanan & Jaringan infrastruktur</p>
       </motion.div>
 
+      {/* ========== SECTION 1: KONFIGURASI LOKASI ========== */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -98,7 +252,7 @@ export default function Konfigurasi() {
         {/* Header */}
         <div className="p-4 bg-slate-50/30 border-b border-slate-100 flex items-center gap-2">
           <Globe size={14} className="text-light-blue" />
-          <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Network Gateway Control</h3>
+          <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Konfigurasi Lokasi (Latitude & Longitude)</h3>
         </div>
 
         {/* Tabel */}
@@ -229,6 +383,9 @@ export default function Konfigurasi() {
           </div>
         )}
       </motion.div>
+
+      {/* ========== SECTION 2: STATUS IDENTITAS PERANGKAT ========== */}
+      <DeviceRegistrationCard />
     </div>
   );
 }
