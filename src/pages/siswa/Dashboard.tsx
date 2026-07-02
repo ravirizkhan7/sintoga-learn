@@ -158,7 +158,28 @@ export default function DashboardSiswa() {
         params: { kode_ujian: examCode.trim().toUpperCase() },
       });
 
-      const data: CheckCodeResult = res.data?.data;
+      // DEBUG: buka console browser & lihat log ini kalau modal masih
+      // nggak muncul. Cek struktur asli response backend kamu di sini.
+      console.log('[check-code] raw response:', res.data);
+
+      // Beberapa kemungkinan bentuk response yang sering ketemu di lapangan:
+      //   { success: true, data: {...} }        -> res.data.data
+      //   { success: true, ujian: {...} }        -> res.data.ujian
+      //   { judul_ujian: ..., durasi_menit: ... } (langsung di root) -> res.data
+      const data: CheckCodeResult | undefined =
+        res.data?.data ?? res.data?.ujian ?? res.data;
+
+      // GUARD: jangan set showConfirmModal(true) kalau data-nya nggak valid.
+      // Ini yang bikin modal "diem-diem aja" sebelumnya — request sukses
+      // tapi data undefined, showConfirmModal tetap true, modal nggak render
+      // karena kondisinya `showConfirmModal && ujianPreview`.
+      if (!data || !data.judul_ujian) {
+        setErrorStatus('Data ujian tidak valid dari server. Cek struktur response backend.');
+        setValidationStatus(null);
+        setIsChecking(false);
+        return;
+      }
+
       setUjianPreview(data);
       setShowConfirmModal(true);
       setValidationStatus(null);
@@ -188,6 +209,14 @@ export default function DashboardSiswa() {
       });
 
       const data: RedeemResult = res.data?.data;
+
+      if (!data?.siswa_ujian?.id) {
+        setErrorStatus('Gagal memulai ujian: data sesi tidak ditemukan.');
+        setShowConfirmModal(false);
+        setTimeout(() => setErrorStatus(null), 3000);
+        return;
+      }
+
       setShowConfirmModal(false);
 
       navigate(`/siswa/ujian/${data.siswa_ujian.id}`, {
