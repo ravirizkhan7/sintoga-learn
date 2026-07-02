@@ -127,12 +127,33 @@ export default function DashboardSiswa() {
 
       const res = await api.post('/validasi-akses', payload);
 
-      if (res.data.success) {
-        setValidationStatus(res.data.message);
+      // DEBUG: buka console browser buat lihat bentuk asli response
+      // backend kamu. Ini kunci buat mastiin field mana yang bener
+      // dipakai sebagai penanda "berhasil".
+      console.log('[validasi-akses] raw response:', res.data);
+
+      // Backend kamu ternyata TIDAK mengirim field `success` yang truthy
+      // (dari hasil testing sebelumnya res.data.success selalu undefined
+      // -> falsy -> selalu masuk ke else meski pesannya "AKSES DIIZINKAN").
+      // Jadi kita tentukan "berhasil" pakai kombinasi indikator lain:
+      //   1. field success eksplisit, KALAU ada -> paling diutamakan
+      //   2. ada field data
+      //   3. fallback: cek kata "diizinkan" / "berhasil" di message
+      const resData = res.data;
+      const successField = resData?.success;
+
+      const isBerhasil =
+        typeof successField === 'boolean'
+          ? successField
+          : Boolean(resData?.data) ||
+            /diizinkan|berhasil|verified|valid/i.test(resData?.message || '');
+
+      if (isBerhasil) {
+        setValidationStatus(resData.message);
         // Validasi berhasil, lanjut ke step 2 (check-code)
         await handleEnterExam();
       } else {
-        setErrorStatus(res.data.message);
+        setErrorStatus(resData.message || 'Akses ditolak.');
         setValidationStatus(null);
         setIsChecking(false);
       }
