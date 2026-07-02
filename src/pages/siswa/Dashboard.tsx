@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Search, Play, AlertCircle, X, ShieldAlert, BadgeCheck, RefreshCcw } from 'lucide-react';
+import { Search, Play, AlertCircle, X, ShieldAlert, BadgeCheck, RefreshCcw, MapPin } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import api from '../../lib/axios';
@@ -41,12 +41,19 @@ export default function DashboardSiswa() {
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
+  const [validationStatus, setValidationStatus] = useState<string | null>(null);
   const navigate = useNavigate();
 
-  // ─── Step 1: Cek kode — GET /ujian/check-code ───────────────────────────
-  // Hanya validasi, TIDAK insert ke database sama sekali.
-  // Siswa bisa batal setelah ini tanpa efek apapun ke DB.
-  const handleEnterExam = async () => {
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * STEP 1: VALIDASI GPS + LocalStorage
+   * ═══════════════════════════════════════════════════════════════════════
+   * Dipanggil PERTAMA kali saat user klik "MASUK PANEL"
+   * - Coba ambil GPS
+   * - Jika gagal, fallback ke localStorage (id_pc_lab)
+   * - Kirim ke backend untuk validasi
+   */
+  const handleValidasiAkses = async () => {
     if (!examCode.trim()) {
       setErrorStatus('Masukkan kode ujian terlebih dahulu.');
       setTimeout(() => setErrorStatus(null), 3000);
@@ -55,7 +62,97 @@ export default function DashboardSiswa() {
 
     try {
       setIsChecking(true);
+      setValidationStatus('Memeriksa keamanan perangkat...');
       setErrorStatus(null);
+
+      // Cek apakah browser support geolocation
+      if (navigator.geolocation) {
+        // Coba ambil GPS
+        navigator.geolocation.getCurrentPosition(
+          (position) => {
+            // GPS BERHASIL
+            kirimValidasiKeBackend({
+              metode: 'GPS',
+              lat: position.coords.latitude,
+              lon: position.coords.longitude,
+              id_pc: localStorage.getItem('id_pc_lab') || null,
+            });
+          },
+          (error) => {
+            // GPS GAGAL -> Fallback ke LocalStorage
+            console.warn('GPS Error:', error.message);
+            fallbackKeLocalStorage();
+          },
+          {
+            enableHighAccuracy: true,
+            timeout: 8000,
+            maximumAge: 0,
+          }
+        );
+      } else {
+        // Browser tidak support GPS -> Fallback
+        fallbackKeLocalStorage();
+      }
+    } catch (err) {
+      setErrorStatus('Terjadi kesalahan saat memeriksa perangkat.');
+      setIsChecking(false);
+    }
+  };
+
+  /**
+   * FALLBACK: Jika GPS gagal, gunakan localStorage
+   */
+  const fallbackKeLocalStorage = () => {
+    const idPcStored = localStorage.getItem('id_pc_lab');
+
+    if (!idPcStored) {
+      setValidationStatus(null);
+      setErrorStatus('GPS tidak aktif dan perangkat Anda belum terdaftar!');
+      setIsChecking(false);
+      return;
+    }
+
+    kirimValidasiKeBackend({
+      metode: 'LOCAL_STORAGE',
+      id_pc: idPcStored,
+    });
+  };
+
+  /**
+   * Kirim validasi ke backend
+   */
+  const kirimValidasiKeBackend = async (payload: any) => {
+    try {
+      setValidationStatus('Memverifikasi dengan server...');
+
+      const res = await api.post('/validasi-akses', payload);
+
+      if (res.data.success) {
+        setValidationStatus(res.data.message);
+        // Validasi berhasil, lanjut ke step 2 (check-code)
+        await handleEnterExam();
+      } else {
+        setErrorStatus(res.data.message);
+        setValidationStatus(null);
+        setIsChecking(false);
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.message || 'Gagal memverifikasi perangkat.';
+      setErrorStatus(msg);
+      setValidationStatus(null);
+      setIsChecking(false);
+    }
+  };
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * STEP 2: CEK KODE UJIAN
+   * ═══════════════════════════════════════════════════════════════════════
+   * Dipanggil SETELAH validasi GPS/LocalStorage berhasil
+   */
+  const handleEnterExam = async () => {
+    try {
+      setValidationStatus('Mengecek kode ujian...');
 
       const res = await api.get('/ujian/check-code', {
         params: { kode_ujian: examCode.trim().toUpperCase() },
@@ -64,18 +161,22 @@ export default function DashboardSiswa() {
       const data: CheckCodeResult = res.data?.data;
       setUjianPreview(data);
       setShowConfirmModal(true);
+      setValidationStatus(null);
     } catch (err: any) {
       const msg = err.response?.data?.message || 'Kode ujian tidak valid atau ujian tidak aktif.';
       setErrorStatus(msg);
-      setTimeout(() => setErrorStatus(null), 3000);
+      setValidationStatus(null);
     } finally {
       setIsChecking(false);
     }
   };
 
-  // ─── Step 2: Mulai ujian — POST /ujian/redeem ────────────────────────────
-  // Baru di sini insert ke DB + waktu_mulai di-set.
-  // Dipanggil hanya ketika siswa klik "Mulai Sesi Ujian".
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * STEP 3: MULAI UJIAN
+   * ═══════════════════════════════════════════════════════════════════════
+   * Dipanggil saat user klik "MULAI SESI UJIAN" di modal
+   */
   const handleStartExam = async () => {
     if (!ujianPreview || isStarting) return;
 
@@ -124,7 +225,7 @@ export default function DashboardSiswa() {
           </div>
           <h1 className="text-4xl font-black italic tracking-tighter mb-2 uppercase leading-none">Portal Akses Ujian</h1>
           <p className="text-blue-100/70 text-xs font-bold uppercase tracking-widest max-w-md mx-auto lg:mx-0">
-            Otorisasi pengerjaan soal dimulai dengan validasi kode yang diberikan oleh pengawas.
+            Verifikasi perangkat melalui GPS atau ID komputer laboratorium yang terdaftar.
           </p>
 
           <div className="mt-10 flex flex-col sm:flex-row items-center gap-3 max-w-xl mx-auto lg:mx-0">
@@ -136,21 +237,33 @@ export default function DashboardSiswa() {
                 className="w-full pl-12 pr-4 py-4 bg-white/10 border-2 border-white/20 rounded-lg backdrop-blur-md outline-none focus:bg-white/20 focus:border-light-blue transition-all placeholder:text-white/30 font-black uppercase text-base tracking-widest shadow-inner"
                 value={examCode}
                 onChange={(e) => setExamCode(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !isChecking && handleEnterExam()}
+                onKeyDown={(e) => e.key === 'Enter' && !isChecking && handleValidasiAkses()}
+                disabled={isChecking}
               />
             </div>
             <button
-              onClick={handleEnterExam}
+              onClick={handleValidasiAkses}
               disabled={isChecking}
               className="w-full sm:w-auto px-10 py-4 bg-light-blue hover:bg-white hover:text-navy text-white font-black rounded-lg text-sm uppercase tracking-tighter transition-all active:scale-95 shadow-xl shadow-light-blue/20 disabled:opacity-70 flex items-center justify-center gap-2"
             >
               {isChecking
-                ? <><RefreshCcw size={14} className="animate-spin" /> MENGECEK...</>
-                : 'MASUK PANEL'}
+                ? <><RefreshCcw size={14} className="animate-spin" /> MEMERIKSA...</>
+                : <><MapPin size={14} /> MASUK PANEL</>}
             </button>
           </div>
 
           <AnimatePresence>
+            {validationStatus && (
+              <motion.div
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mt-4 inline-flex items-center gap-2 text-light-blue font-bold uppercase text-[10px] tracking-widest"
+              >
+                <RefreshCcw size={14} className="animate-spin" />
+                {validationStatus}
+              </motion.div>
+            )}
             {errorStatus && (
               <motion.div
                 initial={{ opacity: 0, y: -10 }}
@@ -176,8 +289,8 @@ export default function DashboardSiswa() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-10">
           {[
-            { num: '01', title: 'Persiapan Sesi', desc: 'Masukkan kode unik ujian yang telah divalidasi oleh proktor atau pengawas ruangan pada panel di atas.' },
-            { num: '02', title: 'Monitoring Ketat', desc: 'Dilarang berpindah tab atau menutup browser. Sistem akan mendeteksi aktivitas mencurigakan secara otomatis.' },
+            { num: '01', title: 'Verifikasi Perangkat', desc: 'Sistem secara otomatis memeriksa lokasi GPS atau ID komputer laboratorium yang terdaftar di database.' },
+            { num: '02', title: 'Input Kode Ujian', desc: 'Masukkan kode unik ujian yang telah divalidasi oleh proktor atau pengawas ruangan pada panel di atas.' },
             { num: '03', title: 'Finalisasi Data', desc: 'Pastikan semua jawaban terisi sebelum klik tombol selesai. Data yang terkirim tidak dapat dianulir kembali.' },
           ].map((item) => (
             <div key={item.num} className="space-y-3 relative">

@@ -29,6 +29,7 @@ interface DeviceRegistrationCardProps {
 function DeviceRegistrationCard({ className }: DeviceRegistrationCardProps) {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRegistering, setIsRegistering] = useState(false);
 
   // Deteksi localStorage saat komponen mount
   useEffect(() => {
@@ -40,7 +41,7 @@ function DeviceRegistrationCard({ className }: DeviceRegistrationCardProps) {
   const handleRegister = () => {
     const input = prompt('Masukkan nomor PC laboratorium (contoh: LAB-01):');
     
-    if (input !== null) { // User tidak klik Cancel
+    if (input !== null) {
       const cleanedInput = input.trim().toUpperCase();
       
       if (!cleanedInput) {
@@ -48,9 +49,24 @@ function DeviceRegistrationCard({ className }: DeviceRegistrationCardProps) {
         return;
       }
 
-      localStorage.setItem('id_pc_lab', cleanedInput);
-      setDeviceId(cleanedInput);
-      alert(`Perangkat berhasil didaftarkan dengan ID: ${cleanedInput}`);
+      setIsRegistering(true);
+
+      // ENDPOINT: POST /perangkat
+      api.post('/perangkat', { nama_pc: cleanedInput })
+        .then((res) => {
+          console.log('✅ Device registered:', res.data);
+          // Simpan ke localStorage
+          localStorage.setItem('id_pc_lab', cleanedInput);
+          setDeviceId(cleanedInput);
+          alert(`Perangkat berhasil didaftarkan dengan ID: ${cleanedInput}`);
+        })
+        .catch((err) => {
+          console.error('❌ Error registering device:', err);
+          alert(err.response?.data?.message || 'Gagal mendaftarkan perangkat');
+        })
+        .finally(() => {
+          setIsRegistering(false);
+        });
     }
   };
 
@@ -146,9 +162,18 @@ function DeviceRegistrationCard({ className }: DeviceRegistrationCardProps) {
             {/* Tombol Daftar */}
             <button
               onClick={handleRegister}
-              className="mt-4 px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded transition-colors flex items-center gap-2"
+              disabled={isRegistering}
+              className="mt-4 px-6 py-2.5 bg-blue-500 hover:bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded transition-colors flex items-center gap-2 disabled:opacity-50"
             >
-              <Edit2 size={12} /> Daftarkan Perangkat Ini
+              {isRegistering ? (
+                <>
+                  <RefreshCcw size={12} className="animate-spin" /> Mendaftarkan...
+                </>
+              ) : (
+                <>
+                  <Edit2 size={12} /> Daftarkan Perangkat Ini
+                </>
+              )}
             </button>
           </>
         )}
@@ -180,14 +205,29 @@ export default function Konfigurasi() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<PengaturanItem>>({});
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // FETCH: Ambil pengaturan dari backend
+  // ENDPOINT: GET /pengaturan
+  // ═══════════════════════════════════════════════════════════════════════
   const fetchSettings = async () => {
     try {
       setIsLoading(true);
       setFetchError(null);
       const res = await api.get('/pengaturan');
       const raw = res.data?.data;
-      setSettings(Array.isArray(raw) ? raw : []);
+      
+      console.log('📍 Response dari API /pengaturan:', res.data);
+      console.log('📊 Settings Array:', raw);
+
+      if (Array.isArray(raw)) {
+        setSettings(raw);
+        console.log(`✅ Loaded ${raw.length} settings`);
+      } else {
+        console.warn('⚠️ Response data bukan array');
+        setSettings([]);
+      }
     } catch (err: any) {
+      console.error('❌ Error fetching settings:', err);
       setFetchError(err.response?.data?.message || 'Gagal mengambil konfigurasi');
     } finally {
       setIsLoading(false);
@@ -198,6 +238,9 @@ export default function Konfigurasi() {
     fetchSettings();
   }, []);
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // EDIT: Mulai edit field
+  // ═══════════════════════════════════════════════════════════════════════
   const startEdit = (item: PengaturanItem) => {
     setEditingId(item.id);
     setEditForm({ key: item.key, value: item.value, keterangan: item.keterangan });
@@ -208,28 +251,50 @@ export default function Konfigurasi() {
     setEditForm({});
   };
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // SAVE: Simpan perubahan field
+  // ENDPOINT: PUT /pengaturan
+  // Request Format:
+  // {
+  //   "pengaturan": [
+  //     { "key": "latitude", "value": "-6.2088" },
+  //     { "key": "longitude", "value": "106.8456" }
+  //   ]
+  // }
+  // ═══════════════════════════════════════════════════════════════════════
   const saveEdit = async (item: PengaturanItem) => {
-    if (!editForm.value?.trim()) {
+    const trimmedValue = editForm.value?.trim();
+    
+    if (!trimmedValue) {
       alert('Value tidak boleh kosong');
       return;
     }
+
     try {
       setIsSaving(true);
 
-      // ← Sesuai backend: kirim semua pengaturan yang ada,
-      // update hanya yang sedang diedit, sisanya pakai nilai lama
+      // Kirim semua pengaturan, update hanya yang sedang diedit
       const payload = {
         pengaturan: settings.map(s => ({
           key: s.key,
-          value: s.id === item.id ? editForm.value!.trim() : s.value,
+          value: s.id === item.id ? trimmedValue : s.value,
         }))
       };
 
-      await api.put('/pengaturan', payload);
+      console.log('📤 Sending payload:', payload);
+
+      const response = await api.put('/pengaturan', payload);
+      
+      console.log('✅ Response dari PUT:', response.data);
+
       setEditingId(null);
       setEditForm({});
-      fetchSettings();
+      
+      // Re-fetch untuk pastikan UI konsisten
+      await fetchSettings();
+      alert('Pengaturan berhasil disimpan');
     } catch (err: any) {
+      console.error('❌ Error saving settings:', err);
       alert(err.response?.data?.message || 'Gagal menyimpan perubahan');
     } finally {
       setIsSaving(false);
@@ -243,7 +308,7 @@ export default function Konfigurasi() {
         <p className="text-[10px] text-slate-400 font-bold uppercase tracking-[0.2em]">Parameter keamanan & Jaringan infrastruktur</p>
       </motion.div>
 
-      {/* ========== SECTION 1: KONFIGURASI LOKASI ========== */}
+      {/* ========== SECTION 1: KONFIGURASI PENGATURAN ========== */}
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -252,7 +317,7 @@ export default function Konfigurasi() {
         {/* Header */}
         <div className="p-4 bg-slate-50/30 border-b border-slate-100 flex items-center gap-2">
           <Globe size={14} className="text-light-blue" />
-          <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Konfigurasi Lokasi (Latitude & Longitude)</h3>
+          <h3 className="text-[10px] font-black text-navy uppercase tracking-widest">Konfigurasi Sistem (Latitude, Longitude, & Lainnya)</h3>
         </div>
 
         {/* Tabel */}
@@ -272,13 +337,13 @@ export default function Konfigurasi() {
               </button>
             </div>
           ) : (
-            <table className="w-full min-w-[600px]">
+            <table className="w-full min-w-[700px]">
               <thead>
                 <tr className="bg-slate-50 border-b border-slate-100 text-left">
-                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[25%]">Key</th>
-                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[30%]">Value</th>
-                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest">Keterangan</th>
-                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right w-[100px]">Aksi</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[20%]">Key</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[25%]">Value</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest w-[35%]">Keterangan</th>
+                  <th className="px-6 py-3 text-[9px] font-black text-slate-400 uppercase tracking-widest text-right w-[20%]">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -291,18 +356,18 @@ export default function Konfigurasi() {
                       editingId === item.id ? 'bg-amber-50/40' : 'hover:bg-slate-50/50'
                     )}
                   >
-                    {/* Key — tidak bisa diubah, read-only */}
+                    {/* Key — read-only */}
                     <td className="px-6 py-4">
-                      <span className="text-xs font-mono font-black text-light-blue">{item.key}</span>
+                      <span className="text-xs font-mono font-black text-light-blue uppercase">{item.key}</span>
                     </td>
 
-                    {/* Value — bisa diedit */}
-                    <td className="px-4 py-3">
+                    {/* Value — editable */}
+                    <td className="px-6 py-4">
                       {editingId === item.id ? (
                         <input
                           autoFocus
                           type="text"
-                          placeholder="Contoh: 192.168.1.1"
+                          placeholder="Masukkan value baru"
                           className="w-full px-3 py-2 bg-white border border-amber-300 rounded text-xs font-mono font-bold text-navy outline-none focus:ring-2 focus:ring-amber-200"
                           value={editForm.value ?? ''}
                           onChange={e => setEditForm({ ...editForm, value: e.target.value })}
@@ -316,11 +381,11 @@ export default function Konfigurasi() {
 
                     {/* Keterangan — read-only */}
                     <td className="px-6 py-4">
-                      <span className="text-xs text-slate-400 font-medium italic">{item.keterangan || '-'}</span>
+                      <span className="text-xs text-slate-500 font-medium">{item.keterangan || '-'}</span>
                     </td>
 
                     {/* Aksi */}
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-6 py-4 text-right">
                       {editingId === item.id ? (
                         <div className="flex items-center justify-end gap-1.5">
                           <button
