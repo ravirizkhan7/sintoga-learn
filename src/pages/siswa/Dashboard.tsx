@@ -248,7 +248,7 @@ export default function DashboardSiswa() {
             >
               {isChecking
                 ? <><RefreshCcw size={14} className="animate-spin" /> MEMERIKSA...</>
-                : <><MapPin size={14} /> MASUK PANEL</>}
+                : <><MapPin size={14} /> MASUK ujian</>}
             </button>
           </div>
 
