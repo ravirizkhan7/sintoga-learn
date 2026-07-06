@@ -34,6 +34,52 @@ interface CheckCodeResult {
   waktu_selesai: string;
 }
 
+interface ValidasiAksesResult {
+  metode: string;
+  nama_pc: string;
+}
+
+// ─── Helper: id_pc diambil dari perangkat yang SUDAH didaftarkan lewat ─────
+// halaman Konfigurasi (lihat Konfigurasi.tsx → DEVICE_STORAGE_KEY).
+// Key HARUS sama persis dengan yang dipakai di sana, karena id yang
+// tersimpan adalah id hasil POST /perangkat, bukan id acak/UUID.
+const DEVICE_STORAGE_KEY = 'device_id';
+
+function getRegisteredIdPc(): string | null {
+  return localStorage.getItem(DEVICE_STORAGE_KEY);
+}
+
+// ─── Helper: ambil koordinat lokasi (lat, lon) via browser geolocation ─────
+function getGeolocation(): Promise<{ lat: string; lon: string }> {
+  return new Promise((resolve, reject) => {
+    if (!('geolocation' in navigator)) {
+      reject(new Error('Geolocation tidak didukung oleh browser ini.'));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        resolve({
+          lat: String(position.coords.latitude),
+          lon: String(position.coords.longitude),
+        });
+      },
+      (error) => {
+        let msg = 'Gagal mengambil lokasi perangkat.';
+        if (error.code === error.PERMISSION_DENIED) {
+          msg = 'Akses lokasi ditolak. Aktifkan izin lokasi untuk melanjutkan.';
+        } else if (error.code === error.POSITION_UNAVAILABLE) {
+          msg = 'Lokasi perangkat tidak tersedia.';
+        } else if (error.code === error.TIMEOUT) {
+          msg = 'Waktu pengambilan lokasi habis, coba lagi.';
+        }
+        reject(new Error(msg));
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  });
+}
+
 export default function DashboardSiswa() {
   const [examCode, setExamCode] = useState('');
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -46,6 +92,70 @@ export default function DashboardSiswa() {
   // ─── Step 1: Cek kode — GET /ujian/check-code ───────────────────────────
   // Hanya validasi, TIDAK insert ke database sama sekali.
   // Siswa bisa batal setelah ini tanpa efek apapun ke DB.
+  //
+  // ─── Step 2: Validasi akses — POST /validasi-akses ──────────────────────
+  // Cukup SALAH SATU metode yang valid, tidak perlu keduanya.
+  // Urutan: 1) lokasi (GPS/lat-lon) dicoba dulu, 2) kalau gagal baru
+  // fallback ke id_pc (LOCAL_STORAGE) dari perangkat yang sudah terdaftar.
+  // Begitu salah satu berhasil, langsung lanjut ke modal konfirmasi.
+  //
+  // PENTING: pesan penolakan yang ditampilkan ke siswa HARUS persis pesan
+  // dari backend (field `message` di response error), bukan pesan buatan
+  // frontend sendiri — supaya siswa/admin tau persis alasan sebenarnya
+  // (mis. "diluar radius lokasi", "perangkat tidak terdaftar untuk ujian ini", dst).
+  const tryValidasiAkses = async (): Promise<ValidasiAksesResult> => {
+    let lastErrorMessage: string | null = null;
+
+    // Percobaan 1: via lokasi (geolocation)
+    try {
+      const geo = await getGeolocation();
+      const res = await api.post('/validasi-akses', {
+        metode: 'GEOLOCATION',
+        id_pc: '',
+        lat: geo.lat,
+        lon: geo.lon,
+      });
+      return res.data?.data;
+    } catch (err: any) {
+      // Simpan pesan asli dari backend (kalau memang error dari server, bukan
+      // error client seperti geolocation ditolak browser)
+      const backendMsg = err?.response?.data?.message;
+      console.warn('[tryValidasiAkses] Percobaan GEOLOCATION gagal:', {
+        status: err?.response?.status,
+        message: backendMsg || err?.message,
+      });
+      if (backendMsg) lastErrorMessage = backendMsg;
+    }
+
+    // Percobaan 2: via id_pc (perangkat yang sudah didaftarkan di Konfigurasi)
+    const idPc = getRegisteredIdPc();
+    if (idPc) {
+      try {
+        const res = await api.post('/validasi-akses', {
+          metode: 'LOCAL_STORAGE',
+          id_pc: idPc,
+          lat: '',
+          lon: '',
+        });
+        return res.data?.data;
+      } catch (err: any) {
+        const backendMsg = err?.response?.data?.message;
+        console.warn('[tryValidasiAkses] Percobaan LOCAL_STORAGE (id_pc=' + idPc + ') gagal:', {
+          status: err?.response?.status,
+          message: backendMsg || err?.message,
+        });
+        // Pesan dari percobaan id_pc dianggap paling relevan karena ini percobaan terakhir
+        if (backendMsg) lastErrorMessage = backendMsg;
+      }
+    } else {
+      console.warn('[tryValidasiAkses] Tidak ada id_pc di localStorage, lewati percobaan LOCAL_STORAGE.');
+    }
+
+    // Lempar pesan ASLI dari backend. Kalau kedua percobaan tidak ada pesan
+    // dari server sama sekali (mis. error jaringan murni), baru pakai fallback umum.
+    throw new Error(lastErrorMessage || 'Validasi akses gagal, silakan coba lagi.');
+  };
+
   const handleEnterExam = async () => {
     if (!examCode.trim()) {
       setErrorStatus('Masukkan kode ujian terlebih dahulu.');
@@ -57,11 +167,26 @@ export default function DashboardSiswa() {
       setIsChecking(true);
       setErrorStatus(null);
 
+      // Step 1: cek kode ujian
       const res = await api.get('/ujian/check-code', {
         params: { kode_ujian: examCode.trim().toUpperCase() },
       });
 
       const data: CheckCodeResult = res.data?.data;
+
+      // Step 2: validasi akses — cukup salah satu (id_pc ATAU lokasi)
+      try {
+        const validasiData = await tryValidasiAkses();
+        // Validasi akses lolos → baru buka modal konfirmasi
+        console.log('Validasi akses berhasil:', validasiData);
+      } catch (validasiErr: any) {
+        // Pesan ini sudah berupa pesan asli dari backend (lihat tryValidasiAkses)
+        setErrorStatus(validasiErr.message);
+        setTimeout(() => setErrorStatus(null), 3000);
+        return;
+      }
+
+      // Semua tahap lolos → tampilkan modal konfirmasi
       setUjianPreview(data);
       setShowConfirmModal(true);
     } catch (err: any) {
@@ -73,7 +198,7 @@ export default function DashboardSiswa() {
     }
   };
 
-  // ─── Step 2: Mulai ujian — POST /ujian/redeem ────────────────────────────
+  // ─── Step 3: Mulai ujian — POST /ujian/redeem ────────────────────────────
   // Baru di sini insert ke DB + waktu_mulai di-set.
   // Dipanggil hanya ketika siswa klik "Mulai Sesi Ujian".
   const handleStartExam = async () => {
@@ -146,7 +271,7 @@ export default function DashboardSiswa() {
             >
               {isChecking
                 ? <><RefreshCcw size={14} className="animate-spin" /> MENGECEK...</>
-                : 'MASUK PANEL'}
+                : 'MASUK UJIAN'}
             </button>
           </div>
 
