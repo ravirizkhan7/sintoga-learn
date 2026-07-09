@@ -75,7 +75,18 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 export default function DashboardGuru() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [copiedId, setCopiedId] = useState(null);
 
+  const handleCopy = async (text, id) => {
+    if (!text || text === '-') return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch (err) {
+      console.error('Gagal menyalin teks: ', err);
+    }
+  };
   const [exams, setExams] = useState<Ujian[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -504,7 +515,31 @@ export default function DashboardGuru() {
                       >
                         <td className="px-8 py-5">
                           <p className="text-sm font-bold text-navy uppercase tracking-tight">{ujian.judul_ujian}</p>
-                          <p className="text-[10px] font-mono font-bold text-light-blue leading-none">{ujian.kode_ujian || '-'}</p>
+                          
+                          {/* Bagian Kode Ujian dengan Tombol Salin */}
+                          <div className="flex items-center gap-1.5 mt-0.5 group">
+                            <p className="text-[10px] font-mono font-bold text-light-blue leading-none">
+                              {ujian.kode_ujian || '-'}
+                            </p>
+                            {ujian.kode_ujian && ujian.kode_ujian !== '-' && (
+                              <button
+                                onClick={() => handleCopy(ujian.kode_ujian, ujian.id || ujian.kode_ujian)}
+                                className="p-1 rounded hover:bg-slate-100 text-slate-400 hover:text-light-blue transition-colors"
+                                title="Salin kode ujian"
+                              >
+                                {copiedId === (ujian.id || ujian.kode_ujian) ? (
+                                  <svg xmlns="http://w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-3 h-3 text-green-500">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                                  </svg>
+                                ) : (
+                                  <svg xmlns="http://w3.org" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376A8.965 8.965 0 0012 12.75c-.497 0-.982.04-1.455.12l-.179.032m8.665 4.342a6.708 6.708 0 01-9.963-2.184m9.963 2.184A7.386 7.386 0 0114.25 18v-2.25m-6 0a3 3 0 116 0V18m-6-2.25m.75-12h11.25c.621 0 1.125.504 1.125 1.125V15M3.75 18v3.375c0 .621.504 1.125 1.125 1.125h9.75M3.75 18v-3.375c0-.621.504-1.125 1.125-1.125h9.75" />
+                                  </svg>
+                                )}
+                              </button>
+                            )}
+                          </div>
+
                           <p className="text-[9px] text-slate-400 font-bold mt-1 uppercase italic">{ujian.tahun_ajar}</p>
                         </td>
                         <td className="px-8 py-5">
