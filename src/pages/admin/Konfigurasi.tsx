@@ -305,32 +305,75 @@ export default function Konfigurasi() {
   };
 
   // [Tab TABEL] Simpan perubahan nama_pc lewat PUT /perangkat/{id}
-  const saveEditDevice = async (item: PerangkatItem) => {
-    if (!editDeviceForm.nama_pc?.trim()) {
-      alert('Nama PC tidak boleh kosong');
-      return;
+  // const saveEditDevice = async (item: PerangkatItem) => {
+  //   if (!editDeviceForm.nama_pc?.trim()) {
+  //     alert('Nama PC tidak boleh kosong');
+  //     return;
+  //   }
+  //   try {
+  //     setIsSavingDevice(true);
+  //     const res = await api.put(`/perangkat/${item.id}`, { nama_pc: editDeviceForm.nama_pc.trim() });
+  //     const updated: PerangkatItem | undefined = res.data?.data;
+
+  //     setAllDevices(prev => prev.map(d => (d.id === item.id ? (updated ?? { ...d, nama_pc: editDeviceForm.nama_pc!.trim() }) : d)));
+
+  //     // Kalau device yang diedit adalah device browser ini juga, sinkronkan tampilan di tab Akses
+  //     const localId = localStorage.getItem(DEVICE_STORAGE_KEY);
+  //     if (localId && String(localId) === String(item.id)) {
+  //       setDeviceData(updated ?? { ...item, nama_pc: editDeviceForm.nama_pc!.trim() });
+  //     }
+
+  //     setEditingDeviceId(null);
+  //     setEditDeviceForm({});
+  //   } catch (err: any) {
+  //     alert(err.response?.data?.message || 'Gagal menyimpan perubahan nama PC');
+  //   } finally {
+  //     setIsSavingDevice(false);
+  //   }
+  // };
+const saveEditDevice = async (item: PerangkatItem) => {
+  if (!editDeviceForm.nama_pc?.trim()) {
+    alert('Nama PC tidak boleh kosong');
+    return;
+  }
+  try {
+    setIsSavingDevice(true);
+    await api.put(`/perangkat/${item.id}`, { nama_pc: editDeviceForm.nama_pc.trim() });
+
+    // ✅ Jangan andalkan parsing response PUT — langsung fetch ulang dari server
+    // biar data yang tampil PASTI sesuai database, bukan tebakan struktur response
+    await fetchDevicesTable();
+
+    // Kalau device yang diedit adalah device browser ini juga, sinkronkan tab Akses
+    const localId = localStorage.getItem(DEVICE_STORAGE_KEY);
+    if (localId && String(localId) === String(item.id)) {
+      await checkDevice();
     }
-    try {
-      setIsSavingDevice(true);
-      const res = await api.put(`/perangkat/${item.id}`, { nama_pc: editDeviceForm.nama_pc.trim() });
-      const updated: PerangkatItem | undefined = res.data?.data;
 
-      setAllDevices(prev => prev.map(d => (d.id === item.id ? (updated ?? { ...d, nama_pc: editDeviceForm.nama_pc!.trim() }) : d)));
+    setEditingDeviceId(null);
+    setEditDeviceForm({});
+  } catch (err: any) {
+    console.error('[saveEditDevice] Error:', err.response?.data);
 
-      // Kalau device yang diedit adalah device browser ini juga, sinkronkan tampilan di tab Akses
-      const localId = localStorage.getItem(DEVICE_STORAGE_KEY);
-      if (localId && String(localId) === String(item.id)) {
-        setDeviceData(updated ?? { ...item, nama_pc: editDeviceForm.nama_pc!.trim() });
+    const validationErrors = err.response?.data?.errors;
+    let msg = err.response?.data?.message || 'Gagal menyimpan perubahan nama PC';
+
+    if (validationErrors?.nama_pc) {
+      const rawMsg = validationErrors.nama_pc[0];
+      if (rawMsg.includes('already been taken')) {
+        msg = `Nama PC "${editDeviceForm.nama_pc}" sudah dipakai oleh perangkat lain. Gunakan nama lain.`;
+      } else {
+        msg = `Nama PC tidak valid: ${validationErrors.nama_pc.join(', ')}`;
       }
-
-      setEditingDeviceId(null);
-      setEditDeviceForm({});
-    } catch (err: any) {
-      alert(err.response?.data?.message || 'Gagal menyimpan perubahan nama PC');
-    } finally {
-      setIsSavingDevice(false);
+    } else if (validationErrors) {
+      msg = `${msg}: ${Object.values(validationErrors).flat().join(', ')}`;
     }
-  };
+
+    alert(msg);
+  } finally {
+    setIsSavingDevice(false);
+  }
+};
 
   // [Tab TABEL] Hapus perangkat dari DATABASE SAJA (localStorage browser manapun tidak disentuh)
   const deleteDeviceFromTable = async (item: PerangkatItem) => {
