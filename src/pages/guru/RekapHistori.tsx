@@ -18,6 +18,9 @@ import {
   AlertCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { cn } from '../../lib/utils';
 import { useAuth } from '../../App';
 import api from '../../lib/axios';
@@ -85,6 +88,7 @@ export default function RekapHistori() {
   const [selectedUjian, setSelectedUjian] = useState<Ujian | null>(null);
   const [hasilData, setHasilData] = useState<HasilUjianResponse | null>(null);
   const [isLoadingHasil, setIsLoadingHasil] = useState(false);
+  const [isExporting, setIsExporting] = useState<'pdf' | 'excel' | null>(null);
 
   const [filterTahunAjar, setFilterTahunAjar] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -137,10 +141,7 @@ export default function RekapHistori() {
       alert(errorMsg);
     } finally {
       setIsLoadingHasil(false);
-      
-    }const res = await api.get(`/ujian/${ujianId}/hasil`);
-const raw = res.data?.data;
-console.log('siswa_ujian sample:', raw?.siswa_ujian?.[0]);
+    }
   };
 
   useEffect(() => {
@@ -157,8 +158,104 @@ console.log('siswa_ujian sample:', raw?.siswa_ujian?.[0]);
     setHasilData(null);
   };
 
-  const handleExport = (type: 'pdf' | 'excel') => {
-    alert(`Mengekspor rekap ${selectedUjian?.judul_ujian} dalam format ${type.toUpperCase()}...`);
+  // ─── Export PDF & Excel ─────────────────────────────────────
+  const buildExportRows = () => {
+    const siswaList = hasilData?.siswa_ujian ?? [];
+    return siswaList.map((s, idx) => ({
+      No: idx + 1,
+      'Nama Siswa': getNamaSiswa(s.siswa),
+      'Waktu Mulai': s.waktu_mulai ? new Date(s.waktu_mulai).toLocaleString('id-ID') : '-',
+      'Waktu Selesai': s.waktu_selesai ? new Date(s.waktu_selesai).toLocaleString('id-ID') : '-',
+      Status: s.status,
+      'Nilai Akhir': s.nilai_akhir ?? '-',
+    }));
+  };
+
+  const buildFileName = () => {
+    const raw = `Rekap_${selectedUjian?.judul_ujian || 'Ujian'}_${selectedUjian?.kelas || ''}`;
+    return raw.replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/_+/g, '_');
+  };
+
+  const handleExport = async (type: 'pdf' | 'excel') => {
+    if (!selectedUjian || !hasilData) {
+      alert('Data hasil ujian belum siap, coba beberapa saat lagi.');
+      return;
+    }
+
+    const rows = buildExportRows();
+    if (rows.length === 0) {
+      alert('Belum ada data siswa untuk diekspor.');
+      return;
+    }
+
+    try {
+      setIsExporting(type);
+      const fileName = buildFileName();
+
+      if (type === 'excel') {
+        const ws = XLSX.utils.json_to_sheet(rows);
+        ws['!cols'] = [
+          { wch: 5 },
+          { wch: 30 },
+          { wch: 20 },
+          { wch: 20 },
+          { wch: 14 },
+          { wch: 12 },
+        ];
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Rekap Nilai');
+        XLSX.writeFile(wb, `${fileName}.xlsx`);
+      } else {
+        const doc = new jsPDF();
+
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Rekap Nilai: ${selectedUjian.judul_ujian}`, 14, 16);
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.text(
+          `${selectedUjian.kelas}  •  ${selectedUjian.kode_ujian || '-'}  •  ${selectedUjian.tahun_ajar}`,
+          14,
+          23
+        );
+
+        let statsY = 30;
+        if (hasilData.statistik) {
+          const st = hasilData.statistik;
+          doc.text(
+            `Rata-rata: ${st.rata_rata}    Tertinggi: ${st.nilai_tertinggi}    Terendah: ${st.nilai_terendah}    ` +
+              `Total Siswa: ${st.total_siswa}    Sudah Dinilai: ${st.sudah_dinilai}    Belum Dinilai: ${st.belum_dinilai}`,
+            14,
+            statsY
+          );
+          statsY += 6;
+        }
+
+        autoTable(doc, {
+          startY: statsY + 4,
+          head: [['No', 'Nama Siswa', 'Waktu Mulai', 'Waktu Selesai', 'Status', 'Nilai Akhir']],
+          body: rows.map(r => [
+            r.No,
+            r['Nama Siswa'],
+            r['Waktu Mulai'],
+            r['Waktu Selesai'],
+            r.Status,
+            r['Nilai Akhir'],
+          ]),
+          styles: { fontSize: 8, cellPadding: 3 },
+          headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: 'bold' },
+          alternateRowStyles: { fillColor: [248, 250, 252] },
+        });
+
+        doc.save(`${fileName}.pdf`);
+      }
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('Gagal mengekspor data. Silakan coba lagi.');
+    } finally {
+      setIsExporting(null);
+    }
   };
 
   const tahunAjarOptions = Array.from(new Set(ujians.map(u => u.tahun_ajar))).sort().reverse();
@@ -205,15 +302,17 @@ console.log('siswa_ujian sample:', raw?.siswa_ujian?.[0]);
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleExport('pdf')}
-              className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded text-[10px] font-black uppercase tracking-widest border border-red-100 hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-sm"
+              disabled={isLoadingHasil || isExporting !== null}
+              className="flex items-center gap-2 px-4 py-2 bg-red-50 text-red-600 rounded text-[10px] font-black uppercase tracking-widest border border-red-100 hover:bg-red-600 hover:text-white transition-all active:scale-95 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <FileText size={14} /> PDF
+              <FileText size={14} /> {isExporting === 'pdf' ? 'Memproses...' : 'PDF'}
             </button>
             <button
               onClick={() => handleExport('excel')}
-              className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 rounded text-[10px] font-black uppercase tracking-widest border border-green-100 hover:bg-green-600 hover:text-white transition-all active:scale-95 shadow-sm"
+              disabled={isLoadingHasil || isExporting !== null}
+              className="flex items-center gap-2 px-4 py-2 bg-green-50 text-green-600 rounded text-[10px] font-black uppercase tracking-widest border border-green-100 hover:bg-green-600 hover:text-white transition-all active:scale-95 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              <TableIcon size={14} /> EXCEL
+              <TableIcon size={14} /> {isExporting === 'excel' ? 'Memproses...' : 'EXCEL'}
             </button>
           </div>
         </div>

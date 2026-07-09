@@ -326,11 +326,11 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
 
         <div className="p-4 border-t border-white/10">
           <div className={cn("px-4 py-2", !isSidebarOpen && "lg:hidden")}>
-            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Auth Terminal</p>
+            <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Username</p>
             <p className="text-xs font-black truncate uppercase italic tracking-tighter text-white">{user.nama}</p>
             <div className="flex items-center gap-2 mt-1">
               <div className="w-1.5 h-1.5 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
-              <p className="text-[10px] uppercase text-slate-400 font-black tracking-widest leading-none">Status: Encrypted</p>
+              <p className="text-[10px] uppercase text-slate-400 font-black tracking-widest leading-none">Status: Online</p>
             </div>
           </div>
         </div>
@@ -558,7 +558,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
             <div className="w-2 h-2 rounded-full bg-exam-success shadow-[0_0_8px_rgba(40,167,69,0.5)]" />
             <span>System Status: Online</span>
           </div>
-          <div className="italic text-navy/40">Sintoga Learn v1.2.5-stable • SMK SINTOGA DIGITAL</div>
+          <div className="italic text-navy/40">Sintoga Learn v1.0</div>
         </div>
       </main>
     </div>
