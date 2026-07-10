@@ -12,9 +12,6 @@ import api, { APP_URL } from '../../lib/axios';
 
 const BASE_STORAGE_URL = `${APP_URL}/storage/`;
 
-// ─────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────
 interface SoalResponse {
   id: number;
   id_ujian: number;
@@ -47,9 +44,14 @@ interface LocationState {
 
 type FinishReason = 'manual' | 'timeout' | 'violation';
 
-// ─────────────────────────────────────────────
-// Seeded shuffle
-// ─────────────────────────────────────────────
+// FIX #2/#3: tipe peringatan ditambah 'devtools' (Inspect Element) dan
+// 'focus' (best-effort untuk side panel / app lain yang mencuri fokus window,
+// termasuk sebagian kasus Chrome side panel semacam Gemini).
+// CATATAN JUJUR: 'focus' tidak 100% menangkap semua kasus side panel Chrome,
+// karena side panel adalah UI bawaan browser, bukan tab/window terpisah,
+// sehingga tidak selalu memicu event blur pada halaman.
+type WarningType = 'fullscreen' | 'visibility' | 'devtools' | 'focus';
+
 const seededShuffle = <T,>(array: T[], seed: number): T[] => {
   const shuffled = [...array];
   let m = shuffled.length, t, i;
@@ -62,9 +64,6 @@ const seededShuffle = <T,>(array: T[], seed: number): T[] => {
   return shuffled;
 };
 
-// ─────────────────────────────────────────────
-// MatchingInterface
-// ─────────────────────────────────────────────
 interface MatchingProps {
   soalId: number;
   pilihan: PilihanJawaban[];
@@ -247,7 +246,7 @@ export default function RuangUjian() {
   // ── Keamanan ────────────────────────────────────────────
   const [violations, setViolations]   = useState(0);
   const [showWarning, setShowWarning] = useState(false);
-  const [warningType, setWarningType] = useState<'fullscreen' | 'visibility'>('fullscreen');
+  const [warningType, setWarningType] = useState<WarningType>('fullscreen');
 
   // ── Cache & guard refs ──────────────────────────────────
   const soalCacheRef    = useRef<{ [soalId: number]: SoalResponse }>({});
@@ -263,6 +262,23 @@ export default function RuangUjian() {
     if (soal.tipe_soal === 'menjodohkan') return soal.pilihan_jawaban;
     return seededShuffle([...soal.pilihan_jawaban], soal.id * 1000 + siswaUjianId);
   }, [soalList, currentIdx, siswaUjianId]);
+
+  // ─────────────────────────────────────────────
+  // FIX #5: Apakah ada soal yang masih ditandai "ragu-ragu"?
+  // Dipakai untuk mengunci tombol FINALISASI SESI — selama masih ada minimal
+  // satu soal yang di-flag ragu, siswa wajib meninjau ulang dulu sebelum bisa
+  // menyelesaikan ujian. Begitu semua tanda ragu dilepas, tombol otomatis
+  // aktif kembali (tidak perlu semua soal terjawab, hanya syaratnya adalah
+  // tidak ada yang berstatus ragu-ragu).
+  // ─────────────────────────────────────────────
+  const hasRaguRagu = useMemo(
+    () => Object.values(flagged).some(Boolean),
+    [flagged],
+  );
+  const jumlahRagu = useMemo(
+    () => Object.values(flagged).filter(Boolean).length,
+    [flagged],
+  );
 
   // ─────────────────────────────────────────────
   // Guard: redirect jika tidak ada state
@@ -354,10 +370,6 @@ export default function RuangUjian() {
         break;
 
       case 'menjodohkan': {
-        // val = { teks_pilihan: teks_pasangan, ... } (text-based map dari MatchingInterface)
-        // Convert ke format ID: [{ pilihan_id, pasangan_id }]
-        // pilihan_id  = id dari pilihan yang punya teks_pilihan === leftText
-        // pasangan_id = id dari pilihan yang punya teks_pasangan === rightText
         const pasangan_terpilih: { pilihan_id: number; pasangan_id: number }[] = [];
 
         if (val && typeof val === 'object') {
@@ -406,42 +418,19 @@ export default function RuangUjian() {
   // FIX: /submit tidak butuh body — semua jawaban sudah di-save via /jawaban
   //      Response menggunakan key `nilai_sementara`
   // ─────────────────────────────────────────────
-  // const handleFinish = useCallback(async (reason: FinishReason = 'manual') => {
-  //   if (isSubmittingRef.current || isFinishedRef.current) return;
-  //   isSubmittingRef.current = true;
-  //   setIsSubmitting(true);
-  //   setShowConfirm(false);
-
-  //   try {
-  //     // Tidak ada request body — backend pakai jawaban yang sudah disimpan
-  //     const res = await api.post(`/ujian/${siswaUjianId}/submit`);
-
-  //     // Response: { message, data: { nilai_sementara, ... } }
-  //     setTempScore(res.data?.data?.nilai_sementara ?? 0);
-  //     setFinishReason(reason);
-  //     isFinishedRef.current = true;
-  //     setIsFinished(true);
-
-  //   } catch (err: any) {
-  //     const status  = err.response?.status;
-  //     const message: string = err.response?.data?.message ?? '';
-  //     console.log(err.response?.data);
-
-  //     // 422 = server sudah tandai ujian selesai sebelumnya → tetap tampil halaman selesai
-  //     if (status === 422) {
-  //       setFinishReason(reason);
-  //       isFinishedRef.current = true;
-  //       setIsFinished(true);
-  //     } else {
-  //       isSubmittingRef.current = false;
-  //       setApiError(message || 'Gagal mengirim jawaban. Coba lagi.');
-  //     }
-  //   } finally {
-  //     setIsSubmitting(false);
-  //   }
-  // }, [siswaUjianId]); // tidak perlu `jawaban` di deps karena submit tidak kirim body
   const handleFinish = useCallback(async (reason: FinishReason = 'manual') => {
     if (isSubmittingRef.current || isFinishedRef.current) return;
+
+    // FIX #5: Guard tambahan di level fungsi. Untuk finalisasi manual, kalau
+    // masih ada soal berstatus ragu-ragu, batalkan proses submit — tombol UI
+    // memang sudah di-disable, tapi guard ini mencegah pemanggilan tidak
+    // langsung (mis. dari tempat lain) tetap lolos saat manual finish.
+    if (reason === 'manual' && hasRaguRagu) {
+      setShowConfirm(false);
+      setApiError('Masih ada soal berstatus RAGU-RAGU. Tinjau ulang dulu sebelum finalisasi.');
+      return;
+    }
+
     isSubmittingRef.current = true;
     setIsSubmitting(true);
     setShowConfirm(false);
@@ -451,14 +440,12 @@ export default function RuangUjian() {
       await api.post(`/ujian/${siswaUjianId}/submit`);
 
       // 2. Fetch nilai_sementara dari endpoint hasil
-      // 2. Fetch nilai dari endpoint hasil
       try {
         const hasil = await api.get(`/siswa-ujian/${siswaUjianId}/hasil`);
-        console.log('DEBUG hasil:', hasil.data); // hapus setelah konfirmasi
         const raw = hasil.data?.data;
         setTempScore(
-          raw?.nilai_sementara ??  // kalau backend sudah tambah ini
-          raw?.nilai_akhir     ??  // fallback — sama yang dipakai Histori.tsx
+          raw?.nilai_sementara ??
+          raw?.nilai_akhir     ??
           raw?.siswa_ujian?.nilai_sementara ??
           raw?.siswa_ujian?.nilai_akhir ??
           0
@@ -466,32 +453,7 @@ export default function RuangUjian() {
       } catch {
         setTempScore(0);
       }
-// 2. Fetch nilai dari endpoint hasil
-// try {
-//   const hasil = await api.get(`/siswa-ujian/${siswaUjianId}/hasil`);
-//   const raw = hasil.data?.data;
-//   const siswaUjian = raw?.siswa_ujian;
 
-//   // Coba ambil dari siswa_ujian dulu
-//   const nilaiDariServer =
-//     siswaUjian?.nilai_sementara ??
-//     siswaUjian?.nilai_akhir ??
-//     null;
-
-//   if (nilaiDariServer !== null) {
-//     setTempScore(nilaiDariServer);
-//   } else {
-//     // Fallback: hitung dari breakdown (untuk yg sudah auto-graded)
-//     const breakdown = raw?.breakdown ?? {};
-//     const types = Object.values(breakdown) as any[];
-//     const totalSoal = types.reduce((acc, t) => acc + (t.total_soal ?? 0), 0);
-//     const totalNilai = types.reduce((acc, t) => acc + ((t.rata_nilai ?? 0) * (t.total_soal ?? 0)), 0);
-//     const nilaiSementara = totalSoal > 0 ? Math.round(totalNilai / totalSoal) : 0;
-//     setTempScore(nilaiSementara);
-//   }
-// } catch {
-//   setTempScore(0);
-// }
       setFinishReason(reason);
       isFinishedRef.current = true;
       setIsFinished(true);
@@ -499,7 +461,6 @@ export default function RuangUjian() {
     } catch (err: any) {
       const status  = err.response?.status;
       const message: string = err.response?.data?.message ?? '';
-      console.log(err.response?.data);
 
       if (status === 422) {
         // Ujian sudah selesai sebelumnya — tetap fetch nilai
@@ -519,7 +480,7 @@ export default function RuangUjian() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [siswaUjianId]);
+  }, [siswaUjianId, hasRaguRagu]);
 
   // Ref ke handleFinish terbaru — listener yang di-attach sekali
   const handleFinishRef = useRef(handleFinish);
@@ -549,6 +510,22 @@ export default function RuangUjian() {
     } catch {}
   };
 
+  // Helper: satu titik untuk menaikkan pelanggaran + tampilkan modal / akhiri ujian.
+  // Dipakai bersama oleh fullscreen, visibility, devtools, dan focus/blur.
+  const registerViolation = useCallback((type: WarningType) => {
+    if (isFinishedRef.current || isSubmittingRef.current) return;
+    setViolations(prev => {
+      const next = prev + 1;
+      if (next >= 3) {
+        handleFinishRef.current('violation');
+      } else {
+        setWarningType(type);
+        setShowWarning(true);
+      }
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     if (isInitializing) return;
 
@@ -565,16 +542,7 @@ export default function RuangUjian() {
     const attachTimeout = setTimeout(() => {
       const onFullscreenChange = () => {
         if (!document.fullscreenElement && !isFinishedRef.current && !isSubmittingRef.current) {
-          setViolations(prev => {
-            const next = prev + 1;
-            if (next >= 3) {
-              handleFinishRef.current('violation');
-            } else {
-              setWarningType('fullscreen');
-              setShowWarning(true);
-            }
-            return next;
-          });
+          registerViolation('fullscreen');
         }
       };
 
@@ -584,14 +552,62 @@ export default function RuangUjian() {
         }
       };
 
+      // FIX #2: Deteksi DevTools / Inspect Element.
+      // Heuristik: selisih ukuran outer vs inner window yang besar biasanya
+      // berarti panel DevTools sedang terbuka (docked di sisi/bawah browser).
+      // Ini tidak 100% akurat (bisa false-positive di window kecil/zoom aneh),
+      // tapi cukup efektif untuk kasus umum Inspect Element di laptop/PC.
+      let devtoolsCurrentlyOpen = false;
+      const DEVTOOLS_THRESHOLD = 160;
+      const checkDevTools = () => {
+        if (isFinishedRef.current || isSubmittingRef.current) return;
+        const widthDiff  = window.outerWidth  - window.innerWidth;
+        const heightDiff = window.outerHeight - window.innerHeight;
+        const isOpenNow = widthDiff > DEVTOOLS_THRESHOLD || heightDiff > DEVTOOLS_THRESHOLD;
+        if (isOpenNow && !devtoolsCurrentlyOpen) {
+          devtoolsCurrentlyOpen = true;
+          registerViolation('devtools');
+        } else if (!isOpenNow) {
+          devtoolsCurrentlyOpen = false;
+        }
+      };
+      const devtoolsInterval = setInterval(checkDevTools, 1000);
+
+      // FIX #3 (best-effort): window blur/focus.
+      // Menangkap kasus fokus keluar dari halaman (alt-tab, klik ke app lain,
+      // DevTools yang di-undock jadi window sendiri, dan SEBAGIAN kasus panel
+      // samping browser). TIDAK menjamin menangkap semua kasus Chrome side
+      // panel (mis. Gemini), karena side panel adalah UI internal browser dan
+      // browser tidak selalu memicu 'blur' pada halaman ketika panel itu dipakai.
+      let blurTimer: ReturnType<typeof setTimeout> | null = null;
+      const onBlur = () => {
+        if (isFinishedRef.current || isSubmittingRef.current) return;
+        // beri jeda kecil untuk menghindari false-positive dari klik ke
+        // dialog fullscreen browser sendiri
+        blurTimer = setTimeout(() => {
+          if (document.visibilityState === 'visible' && !document.hasFocus()) {
+            registerViolation('focus');
+          }
+        }, 300);
+      };
+      const onFocus = () => {
+        if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
+      };
+
       document.addEventListener('fullscreenchange', onFullscreenChange);
       document.addEventListener('webkitfullscreenchange', onFullscreenChange);
       document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('blur', onBlur);
+      window.addEventListener('focus', onFocus);
 
       removeListeners = () => {
         document.removeEventListener('fullscreenchange', onFullscreenChange);
         document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
         document.removeEventListener('visibilitychange', onVisibility);
+        window.removeEventListener('blur', onBlur);
+        window.removeEventListener('focus', onFocus);
+        clearInterval(devtoolsInterval);
+        if (blurTimer) clearTimeout(blurTimer);
       };
     }, 1500);
 
@@ -600,7 +616,7 @@ export default function RuangUjian() {
       removeListeners();
       exitFullscreen();
     };
-  }, [isInitializing]);
+  }, [isInitializing, registerViolation]);
 
   const handleReEnterFullscreen = async () => {
     setShowWarning(false);
@@ -1021,13 +1037,37 @@ export default function RuangUjian() {
               <div className="flex justify-between"><span>SESSION_ID:</span><span className="text-exam-success">{siswaUjianId}</span></div>
               <div className="flex justify-between"><span>NET_KEY:</span><span className="text-exam-success">SECURE</span></div>
             </div>
+
+            {/*
+              FIX #5: Tombol finalisasi SEKARANG dikunci selama masih ada
+              minimal satu soal berstatus "ragu-ragu" (flagged === true).
+              Kondisi disable: isSubmitting ATAU hasRaguRagu.
+              Begitu siswa melepas semua tanda ragu (toggle ulang di soal
+              terkait), tombol otomatis kembali aktif tanpa perlu reload.
+              Catatan: ini SENGAJA mengubah perilaku lama — komentar FIX #4
+              sebelumnya menyatakan tombol ini tidak boleh dikunci oleh status
+              ragu; requirement baru membalik itu, jadi anggap FIX #4 lama
+              sudah tidak berlaku lagi di file ini.
+            */}
             <button
-              disabled={isSubmitting}
+              disabled={isSubmitting || hasRaguRagu}
               onClick={() => setShowConfirm(true)}
-              className="w-full bg-exam-success hover:bg-exam-success/90 text-white font-black py-4 rounded shadow-xl shadow-exam-success/10 transition text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-2"
+              title={hasRaguRagu ? 'Masih ada soal berstatus RAGU-RAGU. Tinjau ulang dulu.' : undefined}
+              className={cn(
+                'w-full text-white font-black py-4 rounded shadow-xl transition text-xs uppercase tracking-[0.2em] flex items-center justify-center gap-2',
+                hasRaguRagu
+                  ? 'bg-slate-300 shadow-none cursor-not-allowed'
+                  : 'bg-exam-success hover:bg-exam-success/90 shadow-exam-success/10 disabled:opacity-60 disabled:cursor-not-allowed',
+              )}
             >
               {isSubmitting ? <RefreshCcw className="animate-spin" size={16} /> : 'FINALISASI SESI'}
             </button>
+
+            {hasRaguRagu && (
+              <p className="text-[9px] font-black text-red-500 uppercase tracking-widest text-center leading-relaxed">
+                Masih ada {jumlahRagu} soal RAGU-RAGU. Tinjau &amp; lepas tanda ragu dulu sebelum bisa finalisasi.
+              </p>
+            )}
           </div>
         </aside>
       </main>
@@ -1041,7 +1081,7 @@ export default function RuangUjian() {
           <div className="hidden sm:block">TERMINAL_ID: LAB_1_05</div>
         </div>
         <div className="hidden md:block">SMK SINTOGA - INTEGRATED EXAM SYSTEM PRO</div>
-        <div>V1.2.5.H-DENSE</div>
+        <div>V1.2.6.H-DENSE</div>
       </footer>
 
       {/* Security Warning Modal */}
@@ -1061,9 +1101,14 @@ export default function RuangUjian() {
               </div>
               <h3 className="text-2xl font-black text-navy mb-4 uppercase italic tracking-tighter">INTEGRITY BREACH!</h3>
               <p className="text-slate-600 mb-8 text-xs font-bold leading-relaxed uppercase tracking-tight">
-                {warningType === 'fullscreen'
-                  ? 'Sistem mendeteksi anda keluar dari mode layar penuh. Ini adalah pelanggaran integritas serius.'
-                  : 'Dilarang membuka aplikasi lain atau berpindah tab selama ujian berlangsung.'}
+                {warningType === 'fullscreen' &&
+                  'Sistem mendeteksi anda keluar dari mode layar penuh. Ini adalah pelanggaran integritas serius.'}
+                {warningType === 'visibility' &&
+                  'Dilarang membuka aplikasi lain atau berpindah tab selama ujian berlangsung.'}
+                {warningType === 'devtools' &&
+                  'Sistem mendeteksi Developer Tools / Inspect Element terbuka. Ini dilarang selama ujian.'}
+                {warningType === 'focus' &&
+                  'Sistem mendeteksi fokus keluar dari halaman ujian (aplikasi lain, panel samping browser, dll). Ini dilarang selama ujian.'}
               </p>
               <div className="p-4 bg-red-50 rounded border border-red-100 mb-8">
                 <p className="text-[10px] font-black text-red-600 uppercase tracking-widest">Akumulasi Pelanggaran</p>
@@ -1119,7 +1164,7 @@ export default function RuangUjian() {
                 </button>
                 <button
                   onClick={() => handleFinish('manual')}
-                  disabled={isSubmitting}
+                  disabled={isSubmitting || hasRaguRagu}
                   className="flex-1 py-3 bg-navy text-white font-black text-xs uppercase tracking-widest rounded shadow-xl shadow-navy/20 hover:bg-navy/90 transition disabled:opacity-60 flex items-center justify-center"
                 >
                   {isSubmitting ? <RefreshCcw className="animate-spin" size={16} /> : 'Kirim Sekarang'}
