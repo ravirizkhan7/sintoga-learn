@@ -50,7 +50,7 @@ type FinishReason = 'manual' | 'timeout' | 'violation';
 // CATATAN JUJUR: 'focus' tidak 100% menangkap semua kasus side panel Chrome,
 // karena side panel adalah UI bawaan browser, bukan tab/window terpisah,
 // sehingga tidak selalu memicu event blur pada halaman.
-type WarningType = 'fullscreen' | 'visibility' | 'devtools' | 'focus';
+type WarningType = 'fullscreen' | 'devtools' | 'focus';
 
 const seededShuffle = <T,>(array: T[], seed: number): T[] => {
   const shuffled = [...array];
@@ -559,18 +559,19 @@ export default function RuangUjian() {
       // tapi cukup efektif untuk kasus umum Inspect Element di laptop/PC.
       let devtoolsCurrentlyOpen = false;
       const DEVTOOLS_THRESHOLD = 160;
-      const checkDevTools = () => {
-        if (isFinishedRef.current || isSubmittingRef.current) return;
-        const widthDiff  = window.outerWidth  - window.innerWidth;
-        const heightDiff = window.outerHeight - window.innerHeight;
-        const isOpenNow = widthDiff > DEVTOOLS_THRESHOLD || heightDiff > DEVTOOLS_THRESHOLD;
-        if (isOpenNow && !devtoolsCurrentlyOpen) {
-          devtoolsCurrentlyOpen = true;
-          registerViolation('devtools');
-        } else if (!isOpenNow) {
-          devtoolsCurrentlyOpen = false;
-        }
-      };
+const checkDevTools = () => {
+  if (isFinishedRef.current || isSubmittingRef.current) return;
+  if (!document.fullscreenElement) { devtoolsCurrentlyOpen = false; return; } // <-- tambahan
+  const widthDiff  = window.outerWidth  - window.innerWidth;
+  const heightDiff = window.outerHeight - window.innerHeight;
+  const isOpenNow = widthDiff > DEVTOOLS_THRESHOLD || heightDiff > DEVTOOLS_THRESHOLD;
+  if (isOpenNow && !devtoolsCurrentlyOpen) {
+    devtoolsCurrentlyOpen = true;
+    registerViolation('devtools');
+  } else if (!isOpenNow) {
+    devtoolsCurrentlyOpen = false;
+  }
+};
       const devtoolsInterval = setInterval(checkDevTools, 1000);
 
       // FIX #3 (best-effort): window blur/focus.
@@ -582,6 +583,7 @@ export default function RuangUjian() {
       let blurTimer: ReturnType<typeof setTimeout> | null = null;
       const onBlur = () => {
         if (isFinishedRef.current || isSubmittingRef.current) return;
+        if (!document.fullscreenElement) return;
         // beri jeda kecil untuk menghindari false-positive dari klik ke
         // dialog fullscreen browser sendiri
         blurTimer = setTimeout(() => {
@@ -1103,8 +1105,6 @@ export default function RuangUjian() {
               <p className="text-slate-600 mb-8 text-xs font-bold leading-relaxed uppercase tracking-tight">
                 {warningType === 'fullscreen' &&
                   'Sistem mendeteksi anda keluar dari mode layar penuh. Ini adalah pelanggaran integritas serius.'}
-                {warningType === 'visibility' &&
-                  'Dilarang membuka aplikasi lain atau berpindah tab selama ujian berlangsung.'}
                 {warningType === 'devtools' &&
                   'Sistem mendeteksi Developer Tools / Inspect Element terbuka. Ini dilarang selama ujian.'}
                 {warningType === 'focus' &&
