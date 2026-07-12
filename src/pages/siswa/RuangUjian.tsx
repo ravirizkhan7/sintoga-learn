@@ -46,10 +46,27 @@ type FinishReason = 'manual' | 'timeout' | 'violation';
 
 // FIX #2/#3: tipe peringatan ditambah 'devtools' (Inspect Element) dan
 // 'focus' (best-effort untuk side panel / app lain yang mencuri fokus window,
-// termasuk sebagian kasus Chrome side panel semacam Gemini).
-// CATATAN JUJUR: 'focus' tidak 100% menangkap semua kasus side panel Chrome,
-// karena side panel adalah UI bawaan browser, bukan tab/window terpisah,
-// sehingga tidak selalu memicu event blur pada halaman.
+// termasuk sebagian kasus Chrome side panel semacam Gemini, serta assistant
+// overlay semacam Google Assistant/Lens yang narik fokus window).
+//
+// FIX #6 (revisi devtools/focus): sebelumnya devtools & focus dideteksi oleh
+// 2 mekanisme terpisah (poll interval vs blur event) yang TIDAK saling tau
+// satu sama lain — akibatnya:
+//   1. Saat devtools dibuka, blur event (cepat, ~300ms) kadang menang duluan
+//      dari poll interval (1000ms) dan salah nge-klaim 'focus' padahal
+//      penyebabnya devtools.
+//   2. 1 aksi buka-inspect bisa kehitung 2 pelanggaran sekaligus (dari blur
+//      DAN dari poll) karena keduanya independen.
+// Sekarang keduanya share flag `devtoolsCurrentlyOpen` + helper
+// `isDevtoolsSized()` yang dipanggil real-time di kedua tempat, jadi
+// klasifikasi konsisten dan tidak dobel hitung.
+//
+// CATATAN JUJUR: 'focus' tidak 100% menangkap semua kasus. Assistant/overlay
+// yang narik fokus window (Gemini side panel, Google Assistant/Lens overlay)
+// punya peluang lebih besar kedeteksi sekarang berkat fallback polling
+// document.hasFocus(). Tapi assistant voice-only yang TIDAK narik fokus sama
+// sekali (mis. dipanggil tanpa switch context apa pun) tetap tidak mungkin
+// kedeteksi dari halaman web — itu di luar akses web page ke level OS.
 type WarningType = 'fullscreen' | 'visibility' | 'devtools' | 'focus';
 
 const seededShuffle = <T,>(array: T[], seed: number): T[] => {
@@ -552,48 +569,103 @@ export default function RuangUjian() {
         }
       };
 
-      // FIX #2: Deteksi DevTools / Inspect Element.
-      // Heuristik: selisih ukuran outer vs inner window yang besar biasanya
-      // berarti panel DevTools sedang terbuka (docked di sisi/bawah browser).
-      // Ini tidak 100% akurat (bisa false-positive di window kecil/zoom aneh),
-      // tapi cukup efektif untuk kasus umum Inspect Element di laptop/PC.
+      // ── Devtools & focus detection ──────────────────────────────────
+      // FIX #6: devtoolsCurrentlyOpen di-share antara poll interval DAN
+      // blur handler biar klasifikasi konsisten dan tidak dobel kehitung
+      // untuk kejadian yang sama (lihat catatan di WarningType di atas).
       let devtoolsCurrentlyOpen = false;
       const DEVTOOLS_THRESHOLD = 160;
-const checkDevTools = () => {
-  if (isFinishedRef.current || isSubmittingRef.current) return;
-  if (!document.fullscreenElement) { devtoolsCurrentlyOpen = false; return; } // <-- tambahan
-  const widthDiff  = window.outerWidth  - window.innerWidth;
-  const heightDiff = window.outerHeight - window.innerHeight;
-  const isOpenNow = widthDiff > DEVTOOLS_THRESHOLD || heightDiff > DEVTOOLS_THRESHOLD;
-  if (isOpenNow && !devtoolsCurrentlyOpen) {
-    devtoolsCurrentlyOpen = true;
-    registerViolation('devtools');
-  } else if (!isOpenNow) {
-    devtoolsCurrentlyOpen = false;
-  }
-};
+
+      const isDevtoolsSized = () => {
+        const widthDiff  = window.outerWidth  - window.innerWidth;
+        const heightDiff = window.outerHeight - window.innerHeight;
+        return widthDiff > DEVTOOLS_THRESHOLD || heightDiff > DEVTOOLS_THRESHOLD;
+      };
+
+      // FIX #2: Deteksi DevTools / Inspect Element.
+      // Poll tiap 1 detik — menangkap devtools yang baru dibuka, ATAU yang
+      // tetap terbuka meskipun fokus sudah balik ke halaman (blur doang
+      // tidak cukup buat kasus ini karena blur cuma nangkep TRANSISI fokus).
+      // Heuristik: selisih ukuran outer vs inner window yang besar biasanya
+      // berarti panel DevTools sedang terbuka (docked di sisi/bawah browser).
+      // Ini tidak 100% akurat (bisa false-positive di window kecil/zoom
+      // aneh), tapi cukup efektif untuk kasus umum Inspect Element di
+      // laptop/PC. Hanya aktif selama masih fullscreen.
+      const checkDevTools = () => {
+        if (isFinishedRef.current || isSubmittingRef.current) return;
+        if (!document.fullscreenElement) { devtoolsCurrentlyOpen = false; return; }
+        const isOpenNow = isDevtoolsSized();
+        if (isOpenNow && !devtoolsCurrentlyOpen) {
+          devtoolsCurrentlyOpen = true;
+          registerViolation('devtools');
+        } else if (!isOpenNow) {
+          devtoolsCurrentlyOpen = false;
+        }
+      };
       const devtoolsInterval = setInterval(checkDevTools, 1000);
 
-      // FIX #3 (best-effort): window blur/focus.
-      // Menangkap kasus fokus keluar dari halaman (alt-tab, klik ke app lain,
-      // DevTools yang di-undock jadi window sendiri, dan SEBAGIAN kasus panel
-      // samping browser). TIDAK menjamin menangkap semua kasus Chrome side
-      // panel (mis. Gemini), karena side panel adalah UI internal browser dan
-      // browser tidak selalu memicu 'blur' pada halaman ketika panel itu dipakai.
+      // FIX #6 (fallback): polling document.hasFocus() tiap 1 detik.
+      // Ini jaring pengaman buat kasus di mana event 'blur' standar TIDAK
+      // fire — misalnya overlay assistant (Gemini side panel, Google
+      // Assistant/Lens) di beberapa browser/OS mobile yang narik fokus
+      // window tanpa memicu blur biasa. Selama overlay itu aktif,
+      // document.hasFocus() akan return false dan tertangkap di sini.
+      let focusLostCurrently = false;
+      const checkFocusPoll = () => {
+        if (isFinishedRef.current || isSubmittingRef.current) return;
+        if (document.visibilityState !== 'visible') return;
+        const lost = !document.hasFocus();
+        if (lost && !focusLostCurrently) {
+          focusLostCurrently = true;
+          if (isDevtoolsSized()) {
+            if (!devtoolsCurrentlyOpen) {
+              devtoolsCurrentlyOpen = true;
+              registerViolation('devtools');
+            }
+          } else {
+            registerViolation('focus');
+          }
+        } else if (!lost) {
+          focusLostCurrently = false;
+        }
+      };
+      const focusPollInterval = setInterval(checkFocusPoll, 1000);
+
+      // FIX #3 (best-effort, versi cepat ~300ms): window blur/focus.
+      // Sekarang ikut cek isDevtoolsSized() secara real-time (bukan andalin
+      // state basi dari interval) biar klasifikasinya BENAR: devtools vs
+      // fokus keluar beneran (app lain / assistant overlay). Pakai flag yang
+      // sama (devtoolsCurrentlyOpen / focusLostCurrently) biar tidak dobel
+      // kehitung bareng poll di atas.
+      // TIDAK menjamin menangkap semua kasus panel samping browser (mis.
+      // Gemini side panel di beberapa versi Chrome), karena itu UI internal
+      // browser dan browser tidak selalu memicu 'blur' saat panel itu
+      // dipakai — makanya ada fallback polling di atas.
       let blurTimer: ReturnType<typeof setTimeout> | null = null;
       const onBlur = () => {
         if (isFinishedRef.current || isSubmittingRef.current) return;
-        // if (!document.fullscreenElement) return;
         // beri jeda kecil untuk menghindari false-positive dari klik ke
         // dialog fullscreen browser sendiri
         blurTimer = setTimeout(() => {
+          if (isFinishedRef.current || isSubmittingRef.current) return;
           if (document.visibilityState === 'visible' && !document.hasFocus()) {
-            registerViolation('focus');
+            if (isDevtoolsSized()) {
+              if (!devtoolsCurrentlyOpen) {
+                devtoolsCurrentlyOpen = true;
+                registerViolation('devtools');
+              }
+              // kalau devtoolsCurrentlyOpen udah true, berarti udah kehitung
+              // duluan (baik dari sini atau dari poll) — jangan dobel.
+            } else if (!focusLostCurrently) {
+              focusLostCurrently = true;
+              registerViolation('focus');
+            }
           }
         }, 300);
       };
       const onFocus = () => {
         if (blurTimer) { clearTimeout(blurTimer); blurTimer = null; }
+        focusLostCurrently = false;
       };
 
       document.addEventListener('fullscreenchange', onFullscreenChange);
@@ -609,6 +681,7 @@ const checkDevTools = () => {
         window.removeEventListener('blur', onBlur);
         window.removeEventListener('focus', onFocus);
         clearInterval(devtoolsInterval);
+        clearInterval(focusPollInterval);
         if (blurTimer) clearTimeout(blurTimer);
       };
     }, 1500);
