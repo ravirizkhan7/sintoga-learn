@@ -50,7 +50,7 @@ type FinishReason = 'manual' | 'timeout' | 'violation';
 // CATATAN JUJUR: 'focus' tidak 100% menangkap semua kasus side panel Chrome,
 // karena side panel adalah UI bawaan browser, bukan tab/window terpisah,
 // sehingga tidak selalu memicu event blur pada halaman.
-type WarningType = 'fullscreen' | 'devtools' | 'focus';
+type WarningType = 'fullscreen' | 'visibility' | 'devtools' | 'focus';
 
 const seededShuffle = <T,>(array: T[], seed: number): T[] => {
   const shuffled = [...array];
@@ -583,7 +583,7 @@ const checkDevTools = () => {
       let blurTimer: ReturnType<typeof setTimeout> | null = null;
       const onBlur = () => {
         if (isFinishedRef.current || isSubmittingRef.current) return;
-        if (!document.fullscreenElement) return;
+        // if (!document.fullscreenElement) return;
         // beri jeda kecil untuk menghindari false-positive dari klik ke
         // dialog fullscreen browser sendiri
         blurTimer = setTimeout(() => {
@@ -1105,6 +1105,8 @@ const checkDevTools = () => {
               <p className="text-slate-600 mb-8 text-xs font-bold leading-relaxed uppercase tracking-tight">
                 {warningType === 'fullscreen' &&
                   'Sistem mendeteksi anda keluar dari mode layar penuh. Ini adalah pelanggaran integritas serius.'}
+                {warningType === 'visibility' &&
+                  'Dilarang membuka aplikasi lain atau berpindah tab selama ujian berlangsung.'}
                 {warningType === 'devtools' &&
                   'Sistem mendeteksi Developer Tools / Inspect Element terbuka. Ini dilarang selama ujian.'}
                 {warningType === 'focus' &&
