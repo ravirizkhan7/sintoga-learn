@@ -1078,10 +1078,9 @@ export default function RuangUjian() {
           <div className="flex items-center gap-1.5 text-exam-success">
             <div className="w-1.5 h-1.5 rounded-full bg-exam-success animate-pulse" /> CLOUD_SYNC: OK
           </div>
-          <div className="hidden sm:block">TERMINAL_ID: LAB_1_05</div>
         </div>
         <div className="hidden md:block">SMK SINTOGA - INTEGRATED EXAM SYSTEM PRO</div>
-        <div>V1.2.6.H-DENSE</div>
+        <div>V1.0</div>
       </footer>
 
       {/* Security Warning Modal */}
