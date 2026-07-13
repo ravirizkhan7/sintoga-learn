@@ -73,13 +73,13 @@ export default function DashboardAdmin() {
       color: 'text-indigo-500',
       path: '/admin/jurusan'
     },
-    { 
-      label: 'Rekap Histori', 
-      icon: History, 
-      desc: 'Lihat rekap hasil ujian', 
-      color: 'text-emerald-500',
-      path: '/admin/rekap'
-    },
+    // { 
+    //   label: 'Rekap Histori', 
+    //   icon: History, 
+    //   desc: 'Lihat rekap hasil ujian', 
+    //   color: 'text-emerald-500',
+    //   path: '/admin/rekap'
+    // },
     { 
       label: 'Konfigurasi', 
       icon: Settings, 
