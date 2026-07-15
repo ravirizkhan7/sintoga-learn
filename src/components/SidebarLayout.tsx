@@ -131,7 +131,7 @@ export default function SidebarLayout({ children }: SidebarLayoutProps) {
       { path: '/admin', icon: LayoutDashboard, label: 'Sistem' },
       { path: '/admin/users', icon: Users, label: 'Kelola User' },
       { path: '/admin/jurusan', icon: Layers, label: 'Manajemen Jurusan' },
-      // { path: '/admin/rekap', icon: History, label: 'Rekap Histori' },
+      { path: '/admin/rekap', icon: History, label: 'Rekap Histori' },
       { path: '/admin/konfigurasi', icon: Settings, label: 'Konfigurasi' },
     ],
   };
