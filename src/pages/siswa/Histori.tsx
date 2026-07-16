@@ -3,6 +3,7 @@ import {
   History,
   CheckCircle2,
   XCircle,
+  AlertCircle,
   BookOpen,
   ArrowLeft,
   RefreshCcw,
@@ -76,12 +77,51 @@ interface DetailHasil {
   jawabans: JawabanItem[];
 }
 
-// ─── Helpers ──────────────────────────────────────────────────
-const getJudulUjian = (item: RiwayatItem): string =>
-  item.ujian?.judul_ujian || item.judul_ujian || `Ujian #${item.ujian_id}`;
+// ─── Status Jawaban (Benar / Hampir Benar / Salah) ─────────────
+type StatusJawaban = 'benar' | 'hampir_benar' | 'salah' | 'tidak_menjawab';
 
-const getTipeUjian = (item: RiwayatItem): string | null =>
-  item.ujian?.tipe_ujian || null;
+function getStatusJawaban(skor: number, adaJawaban: boolean): StatusJawaban {
+  if (!adaJawaban) return 'tidak_menjawab';
+  if (skor >= 100) return 'benar';
+  if (skor <= 0) return 'salah';
+  return 'hampir_benar';
+}
+
+const STATUS_CONFIG: Record<
+  StatusJawaban,
+  { label: string; badgeClasses: string; headerClasses: string; textClasses: string }
+> = {
+  benar: {
+    label: 'Benar',
+    badgeClasses: 'bg-green-50 border-green-200 text-green-700',
+    headerClasses: 'bg-green-50 border-green-100',
+    textClasses: 'text-green-600',
+  },
+  hampir_benar: {
+    label: 'Hampir Benar',
+    badgeClasses: 'bg-amber-50 border-amber-200 text-amber-700',
+    headerClasses: 'bg-amber-50 border-amber-100',
+    textClasses: 'text-amber-600',
+  },
+  salah: {
+    label: 'Salah',
+    badgeClasses: 'bg-red-50 border-red-200 text-red-600',
+    headerClasses: 'bg-red-50 border-red-100',
+    textClasses: 'text-red-500',
+  },
+  tidak_menjawab: {
+    label: 'Tidak Menjawab',
+    badgeClasses: 'bg-slate-50 border-slate-200 text-slate-400',
+    headerClasses: 'bg-slate-50 border-slate-100',
+    textClasses: 'text-slate-400',
+  },
+};
+
+function StatusIcon({ status, size = 14 }: { status: StatusJawaban; size?: number }) {
+  if (status === 'benar') return <CheckCircle2 size={size} className="shrink-0" />;
+  if (status === 'hampir_benar') return <AlertCircle size={size} className="shrink-0" />;
+  return <XCircle size={size} className="shrink-0" />;
+}
 
 // ─────────────────────────────────────────────────────────────
 // Hitung skor per soal di frontend
@@ -116,13 +156,25 @@ function hitungSkor(item: JawabanItem): number {
   if (tipe === 'ganda_kompleks') {
     const selectedIds = jawaban_siswa?.id_pilihan_terpilih ?? [];
     if (selectedIds.length === 0) return 0;
-    // Jumlahkan persentase_nilai dari pilihan yang dipilih DAN benar
+
+    const correctIds = pilihan.filter(p => p.is_true === 1).map(p => p.id);
+    const correctSet = new Set(correctIds);
+    const selectedSet = new Set(selectedIds);
+
+    // Kalau jawaban siswa PERSIS sama dengan kunci jawaban, paksa 100.
+    // Ini menghindari error pembulatan backend, misal 33+33+33 = 99 padahal seharusnya 100.
+    const isExactMatch =
+      correctSet.size === selectedSet.size &&
+      [...correctSet].every(id => selectedSet.has(id));
+    if (isExactMatch) return 100;
+
+    // Selain itu (sebagian benar / ada yang salah dipilih), jumlahkan apa adanya
     const total = selectedIds.reduce((acc, id) => {
       const p = pilihan.find(x => x.id === id);
       if (!p) return acc;
       return acc + (p.is_true === 1 ? (p.persentase_nilai ?? 0) : 0);
     }, 0);
-    return total;
+    return Math.min(100, Math.round(total));
   }
 
   // ── Menjodohkan: hitung pasangan benar / pasangan valid ──────
@@ -214,6 +266,21 @@ function SectionLabel({
   );
 }
 
+// Badge status untuk soal auto-grade (objektif, ganda_kompleks, menjodohkan)
+function StatusBadge({ status, skor }: { status: StatusJawaban; skor: number }) {
+  const config = STATUS_CONFIG[status];
+  return (
+    <div className={cn(
+      'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[10px] font-black uppercase tracking-widest',
+      config.badgeClasses,
+    )}>
+      <StatusIcon status={status} size={11} />
+      {config.label} · Nilai: {skor}
+    </div>
+  );
+}
+
+// Badge nilai murni untuk isian/essay (nilai manual guru, bukan 0-100 auto-grade)
 function SkorBadge({ nilai, isCorrect }: { nilai: number; isCorrect: boolean }) {
   return (
     <div className={cn(
@@ -283,10 +350,15 @@ export default function HistoriSiswa() {
       setIsLoadingList(true);
       setListError(null);
       const res = await api.get('/riwayat-ujian');
-      const paginatedData = res.data?.data;
-      const items: RiwayatItem[] = Array.isArray(paginatedData?.data)
-        ? paginatedData.data
-        : [];
+      const responseData = res.data?.data;
+
+      // Backend bisa balikin plain array ATAU paginated object { data: [...] }
+      const items: RiwayatItem[] = Array.isArray(responseData)
+        ? responseData
+        : Array.isArray(responseData?.data)
+          ? responseData.data
+          : [];
+
       setRiwayat(items);
     } catch (err: any) {
       setListError(err.response?.data?.message || 'Gagal mengambil histori ujian');
@@ -295,54 +367,32 @@ export default function HistoriSiswa() {
     }
   };
 
-  // ─── Fetch detail ─────────────────────────────────────────────
-// const fetchDetail = async (item: RiwayatItem) => {
-//   try {
-//     setIsLoadingDetail(true);
-//     setSelectedItem(item);
-//     const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
-//     const raw = res.data?.data;
+  const fetchDetail = async (item: RiwayatItem) => {
+    try {
+      setIsLoadingDetail(true);
+      setSelectedItem(item);
+      const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
+      const raw = res.data?.data;
 
-//     setDetail({
-//       siswa:       raw?.siswa || '',
-//       nilai_akhir: raw?.nilai_akhir || raw?.siswa_ujian?.nilai_akhir || item.nilai_akhir || '0',
-//       breakdown:   raw?.breakdown ?? [],
-//       jawabans:    raw?.jawabans ?? raw?.jawaban ?? [],
-//     });
-//     setSelectedSiswaUjianId(item.id);
-//   } catch (err: any) {
-//     alert(err.response?.data?.message || 'Gagal mengambil detail hasil ujian');
-//   } finally {
-//     setIsLoadingDetail(false);
-//   }
-// };
+      // Pisahkan nilai_akhir vs nilai_sementara
+      const nilaiAkhir     = raw?.nilai_akhir ?? raw?.siswa_ujian?.nilai_akhir ?? null;
+      const nilaiSementara = raw?.siswa_ujian?.nilai_sementara ?? null;
+      const isSementara    = !nilaiAkhir && !!nilaiSementara;
 
-const fetchDetail = async (item: RiwayatItem) => {
-  try {
-    setIsLoadingDetail(true);
-    setSelectedItem(item);
-    const res = await api.get(`/siswa-ujian/${item.id}/hasil`);
-    const raw = res.data?.data;
-
-    // Pisahkan nilai_akhir vs nilai_sementara
-    const nilaiAkhir     = raw?.nilai_akhir ?? raw?.siswa_ujian?.nilai_akhir ?? null;
-    const nilaiSementara = raw?.siswa_ujian?.nilai_sementara ?? null;
-    const isSementara    = !nilaiAkhir && !!nilaiSementara;
-
-    setDetail({
-      siswa:              raw?.siswa || '',
-      nilai_akhir:        nilaiAkhir || nilaiSementara || item.nilai_akhir || '0',
-      is_nilai_sementara: isSementara,
-      breakdown:          raw?.breakdown ?? [],
-      jawabans:           raw?.jawabans ?? raw?.jawaban ?? [],
-    });
-    setSelectedSiswaUjianId(item.id);
-  } catch (err: any) {
-    alert(err.response?.data?.message || 'Gagal mengambil detail hasil ujian');
-  } finally {
-    setIsLoadingDetail(false);
-  }
-};
+      setDetail({
+        siswa:              raw?.siswa || '',
+        nilai_akhir:        nilaiAkhir || nilaiSementara || item.nilai_akhir || '0',
+        is_nilai_sementara: isSementara,
+        breakdown:          raw?.breakdown ?? [],
+        jawabans:           raw?.jawabans ?? raw?.jawaban ?? [],
+      });
+      setSelectedSiswaUjianId(item.id);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Gagal mengambil detail hasil ujian');
+    } finally {
+      setIsLoadingDetail(false);
+    }
+  };
 
   useEffect(() => { fetchRiwayat(); }, []);
 
@@ -357,43 +407,41 @@ const fetchDetail = async (item: RiwayatItem) => {
           <ArrowLeft size={16} /> Kembali ke List Histori
         </button>
 
-{/* ── Header Score ── */}
-<div className="bg-navy rounded-lg p-6 text-white relative overflow-hidden shadow-xl border-b-8 border-light-blue">
-  
-  {/* Menggunakan grid: 1 kolom di mobile, 2 kolom di layar desktop (sm) */}
-  <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
-    
-    {/* Sisi Kiri: Detail info ujian */}
-    <div className="flex flex-col items-start">
-      <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded border border-white/20 mb-3">
-        <History size={14} className="text-light-blue" />
-        <span className="text-[9px] font-black uppercase tracking-widest">Detail Hasil Ujian</span>
-      </div>
-      <h1 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 uppercase break-all">
-        {getJudulUjian(selectedItem)}
-      </h1>
-      <p className="text-blue-100/70 text-[10px] font-black uppercase tracking-widest">
-        {detail.siswa} · Status: {selectedItem.status}
-      </p>
-    </div>
+        {/* ── Header Score ── */}
+        <div className="bg-navy rounded-lg p-6 text-white relative overflow-hidden shadow-xl border-b-8 border-light-blue">
+          <div className="relative z-10 grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
 
-    {/* Sisi Kanan: Nilai Akhir */}
-    <div className="text-left sm:text-right mt-4 sm:mt-0 border-t border-white/10 pt-4 sm:border-t-0 sm:pt-0">
-      <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-1">
-        {detail.is_nilai_sementara ? 'NILAI SEMENTARA' : 'NILAI AKHIR'}
-      </p>
-      <h2 className="text-5xl sm:text-7xl font-black italic tracking-tighter leading-none text-white">
-        {detail.nilai_akhir ?? '0'}
-      </h2>
-      {detail.is_nilai_sementara && (
-        <p className="text-[9px] text-yellow-300/70 font-black uppercase tracking-widest mt-1">
-          ⏳ Menunggu penilaian manual guru
-        </p>
-      )}
-    </div>
+            {/* Sisi Kiri: Detail info ujian */}
+            <div className="flex flex-col items-start">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-white/10 rounded border border-white/20 mb-3">
+                <History size={14} className="text-light-blue" />
+                <span className="text-[9px] font-black uppercase tracking-widest">Detail Hasil Ujian</span>
+              </div>
+              <h1 className="text-2xl sm:text-3xl font-black italic tracking-tighter mb-1 uppercase break-all">
+                {getJudulUjian(selectedItem)}
+              </h1>
+              <p className="text-blue-100/70 text-[10px] font-black uppercase tracking-widest">
+                {detail.siswa} · Status: {selectedItem.status}
+              </p>
+            </div>
 
-  </div>
-</div>
+            {/* Sisi Kanan: Nilai Akhir */}
+            <div className="text-left sm:text-right mt-4 sm:mt-0 border-t border-white/10 pt-4 sm:border-t-0 sm:pt-0">
+              <p className="text-[10px] font-black uppercase tracking-widest text-light-blue mb-1">
+                {detail.is_nilai_sementara ? 'NILAI SEMENTARA' : 'NILAI AKHIR'}
+              </p>
+              <h2 className="text-5xl sm:text-7xl font-black italic tracking-tighter leading-none text-white">
+                {detail.nilai_akhir ?? '0'}
+              </h2>
+              {detail.is_nilai_sementara && (
+                <p className="text-[9px] text-yellow-300/70 font-black uppercase tracking-widest mt-1">
+                  ⏳ Menunggu penilaian manual guru
+                </p>
+              )}
+            </div>
+
+          </div>
+        </div>
 
         {/* ── Review Soal & Jawaban ── */}
         {detail.jawabans.length === 0 ? (
@@ -407,10 +455,10 @@ const fetchDetail = async (item: RiwayatItem) => {
 
             {detail.jawabans.map((jawabanItem, idx) => {
               const { soal, jawaban_siswa } = jawabanItem;
+              const tipe = soal.tipe_soal;
 
               // ── Hitung skor di frontend karena backend kirim nilai: null ──
               const skorAkhir = hitungSkor(jawabanItem);
-              const isCorrect = skorAkhir > 0;
 
               // ── Gambar ──
               const rawGambar = soal.jalur_gambar || soal.path_gambar || null;
@@ -443,6 +491,20 @@ const fetchDetail = async (item: RiwayatItem) => {
                 return { p, teksJawaban, isMatch };
               });
 
+              // ── Tentukan apakah soal ini termasuk auto-grade (punya status Benar/Hampir Benar/Salah) ──
+              const isAutoGrade = ['objektif', 'ganda_kompleks', 'menjodohkan'].includes(tipe);
+
+              // ── Apakah siswa menjawab soal ini sama sekali? ──
+              const adaJawaban =
+                tipe === 'menjodohkan'
+                  ? (jawaban_siswa?.pasangan_terpilih ?? []).length > 0
+                  : ['isian', 'essay'].includes(tipe)
+                    ? !!jawaban_siswa?.jawaban_teks
+                    : selectedIds.length > 0;
+
+              const status = getStatusJawaban(skorAkhir, adaJawaban);
+              const statusConfig = STATUS_CONFIG[status];
+
               return (
                 <div
                   key={soal.id}
@@ -451,27 +513,18 @@ const fetchDetail = async (item: RiwayatItem) => {
                   {/* ── Card Header ── */}
                   <div className={cn(
                     'px-6 py-3 flex items-center justify-between border-b',
-                    isCorrect ? 'bg-green-50 border-green-100' : 'bg-red-50 border-red-100',
+                    statusConfig.headerClasses,
                   )}>
                     <span className="text-[10px] font-black text-navy uppercase">Soal No. {idx + 1}</span>
                     <div className="flex items-center gap-3">
-                      {isCorrect ? (
-                        <div className="flex items-center gap-1.5 text-green-600">
-                          <CheckCircle2 size={14} />
-                          <span className="text-[9px] font-black uppercase">Benar</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 text-red-500">
-                          <XCircle size={14} />
-                          <span className="text-[9px] font-black uppercase">Salah</span>
-                        </div>
-                      )}
+                      <div className={cn('flex items-center gap-1.5', statusConfig.textClasses)}>
+                        <StatusIcon status={status} size={14} />
+                        <span className="text-[9px] font-black uppercase">{statusConfig.label}</span>
+                      </div>
                       {/* Skor di header card */}
                       <div className={cn(
                         'px-2 py-0.5 rounded border text-[10px] font-black',
-                        isCorrect
-                          ? 'bg-green-100 border-green-200 text-green-700'
-                          : 'bg-red-100 border-red-200 text-red-600',
+                        statusConfig.badgeClasses,
                       )}>
                         Skor: {skorAkhir}
                       </div>
@@ -502,7 +555,7 @@ const fetchDetail = async (item: RiwayatItem) => {
                       {/* ──────────────────────────────────── */}
                       {/* OBJEKTIF / GANDA KOMPLEKS            */}
                       {/* ──────────────────────────────────── */}
-                      {['objektif', 'ganda_kompleks'].includes(soal.tipe_soal) && (
+                      {['objektif', 'ganda_kompleks'].includes(tipe) && (
                         <div className="space-y-4">
 
                           <div>
@@ -533,7 +586,7 @@ const fetchDetail = async (item: RiwayatItem) => {
 
                           <div>
                             <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
-                            <SkorBadge nilai={skorAkhir} isCorrect={isCorrect} />
+                            <StatusBadge status={status} skor={skorAkhir} />
                           </div>
 
                         </div>
@@ -542,7 +595,7 @@ const fetchDetail = async (item: RiwayatItem) => {
                       {/* ──────────────────────────────────── */}
                       {/* MENJODOHKAN                         */}
                       {/* ──────────────────────────────────── */}
-                      {soal.tipe_soal === 'menjodohkan' && (
+                      {tipe === 'menjodohkan' && (
                         <div className="space-y-4">
 
                           <div>
@@ -602,7 +655,7 @@ const fetchDetail = async (item: RiwayatItem) => {
 
                           <div>
                             <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
-                            <SkorBadge nilai={skorAkhir} isCorrect={isCorrect} />
+                            <StatusBadge status={status} skor={skorAkhir} />
                           </div>
 
                         </div>
@@ -611,7 +664,7 @@ const fetchDetail = async (item: RiwayatItem) => {
                       {/* ──────────────────────────────────── */}
                       {/* ISIAN / ESSAY                       */}
                       {/* ──────────────────────────────────── */}
-                      {['isian', 'essay'].includes(soal.tipe_soal) && (
+                      {['isian', 'essay'].includes(tipe) && (
                         <div className="space-y-4">
 
                           <div>
@@ -629,7 +682,7 @@ const fetchDetail = async (item: RiwayatItem) => {
 
                           <div>
                             <SectionLabel icon={<History size={10} />} label="Perolehan Nilai" variant="orange" />
-                            <SkorBadge nilai={skorAkhir} isCorrect={isCorrect} />
+                            <SkorBadge nilai={skorAkhir} isCorrect={skorAkhir > 0} />
                           </div>
 
                         </div>
@@ -765,4 +818,13 @@ const fetchDetail = async (item: RiwayatItem) => {
       )}
     </div>
   );
+}
+
+// ─── Helpers ──────────────────────────────────────────────────
+function getJudulUjian(item: RiwayatItem): string {
+  return item.ujian?.judul_ujian || item.judul_ujian || `Ujian #${item.ujian_id}`;
+}
+
+function getTipeUjian(item: RiwayatItem): string | null {
+  return item.ujian?.tipe_ujian || null;
 }
