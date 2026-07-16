@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-export const API_URL = import.meta.env.VITE_API_URL || 'https://afford-attract-recipe-tank.trycloudflare.com/api';
+export const API_URL = import.meta.env.VITE_API_URL || 'https://jets-replacement-americas-powers.trycloudflare.com/api';
 
 export const APP_URL = API_URL.replace(/\/api\/?$/, '');
 
